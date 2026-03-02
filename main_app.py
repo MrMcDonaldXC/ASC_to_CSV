@@ -208,6 +208,13 @@ class MainApplication:
         self.compare_zoom_level: float = 1.0                    # 对比图表缩放级别
         self.compare_scroll_position: float = 0.0               # 对比图表水平滚动位置
         
+        # 性能优化相关
+        self._chart_update_pending: bool = False                # 图表更新是否待处理
+        self._compare_update_pending: bool = False              # 对比图表更新是否待处理
+        self._last_chart_update: float = 0                      # 上次图表更新时间
+        self._last_compare_update: float = 0                    # 上次对比图表更新时间
+        self._debounce_delay: int = 50                          # 防抖延迟（毫秒）
+        
         # 初始化界面
         self._setup_styles()
         self._create_widgets()
@@ -452,8 +459,11 @@ class MainApplication:
         ttk.Label(file_frame, text="选择文件:").pack(side=tk.LEFT)
         
         # 文件列表框，支持多选
-        self.compare_file_listbox = tk.Listbox(file_frame, height=3, selectmode=tk.MULTIPLE, width=40)
+        self.compare_file_listbox = tk.Listbox(file_frame, height=4, selectmode=tk.MULTIPLE, width=40)
         self.compare_file_listbox.pack(side=tk.LEFT, padx=5)
+        
+        # 绑定鼠标滚轮事件，实现每次只滚动一行
+        self.compare_file_listbox.bind('<MouseWheel>', self._on_file_list_scroll)
         
         ttk.Button(file_frame, text="刷新文件", command=self._refresh_compare_files).pack(side=tk.LEFT, padx=5)
         
@@ -593,6 +603,26 @@ class MainApplication:
         except tk.TclError:
             # 如果界面已销毁，忽略错误
             pass
+    
+    def _on_file_list_scroll(self, event):
+        """文件列表鼠标滚轮事件处理，实现每次只滚动一行
+        
+        Args:
+            event: 鼠标事件对象
+        """
+        # 获取当前可见的第一个项目索引
+        first_visible = self.compare_file_listbox.nearest(0)
+        
+        # 根据滚轮方向调整滚动位置
+        if event.delta > 0:
+            # 向上滚动，每次只滚动一行
+            self.compare_file_listbox.see(max(0, first_visible - 1))
+        else:
+            # 向下滚动，每次只滚动一行
+            self.compare_file_listbox.see(first_visible + 1)
+        
+        # 返回 "break" 以阻止默认的滚动行为
+        return "break"
     
     def _browse_asc(self):
         """浏览并选择ASC文件"""
@@ -951,7 +981,7 @@ class MainApplication:
         """
         self.zoom_level = float(value)
         self.zoom_label.config(text=f"{int(self.zoom_level * 100)}%")
-        self._update_chart()
+        self._debounce_chart_update()
     
     def _on_scroll_changed(self, value):
         """滚动位置变化事件处理
@@ -960,7 +990,45 @@ class MainApplication:
             value: 滚动位置值(0-100)
         """
         self.scroll_position = float(value) / 100.0
+        self._debounce_chart_update()
+    
+    def _debounce_chart_update(self):
+        """防抖更新数据可视化图表"""
+        import time
+        current_time = time.time() * 1000
+        
+        if current_time - self._last_chart_update < self._debounce_delay:
+            if not self._chart_update_pending:
+                self._chart_update_pending = True
+                self.root.after(self._debounce_delay, self._do_chart_update)
+        else:
+            self._do_chart_update()
+    
+    def _do_chart_update(self):
+        """执行图表更新"""
+        import time
+        self._chart_update_pending = False
+        self._last_chart_update = time.time() * 1000
         self._update_chart()
+    
+    def _debounce_compare_update(self):
+        """防抖更新数据对比图表"""
+        import time
+        current_time = time.time() * 1000
+        
+        if current_time - self._last_compare_update < self._debounce_delay:
+            if not self._compare_update_pending:
+                self._compare_update_pending = True
+                self.root.after(self._debounce_delay, self._do_compare_update)
+        else:
+            self._do_compare_update()
+    
+    def _do_compare_update(self):
+        """执行对比图表更新"""
+        import time
+        self._compare_update_pending = False
+        self._last_compare_update = time.time() * 1000
+        self._generate_compare_chart()
     
     def _on_mouse_scroll(self, event):
         """鼠标滚轮事件处理，以鼠标位置为中心进行缩放
@@ -1382,8 +1450,8 @@ class MainApplication:
         """
         self.compare_zoom_level = float(value)
         self.compare_zoom_label.config(text=f"{int(self.compare_zoom_level * 100)}%")
-        # 重新生成图表以应用缩放效果
-        self._generate_compare_chart()
+        # 使用防抖机制重新生成图表
+        self._debounce_compare_update()
     
     def _on_compare_scroll_changed(self, value):
         """对比图表水平滚动变化事件处理
@@ -1392,7 +1460,8 @@ class MainApplication:
             value: 滚动位置值（0-100）
         """
         self.compare_scroll_position = float(value) / 100.0
-        self._generate_compare_chart()
+        # 使用防抖机制重新生成图表
+        self._debounce_compare_update()
     
     def _on_compare_mouse_scroll(self, event):
         """对比图表鼠标滚轮事件处理，以鼠标位置为中心进行缩放
