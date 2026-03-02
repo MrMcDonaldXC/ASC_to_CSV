@@ -963,17 +963,53 @@ class MainApplication:
         self._update_chart()
     
     def _on_mouse_scroll(self, event):
-        """鼠标滚轮事件处理，用于缩放图表
+        """鼠标滚轮事件处理，以鼠标位置为中心进行缩放
         
         Args:
             event: 鼠标事件对象
         """
         if event.inaxes:
+            # 获取当前鼠标位置
+            x_mouse = event.xdata
+            
+            # 保存当前的缩放级别
+            old_zoom = self.zoom_level
+            
             # 根据滚轮方向调整缩放级别
             if event.button == 'up':
-                self.zoom_level = min(5.0, self.zoom_level * 1.1)
+                new_zoom = min(5.0, self.zoom_level * 1.1)
             else:
-                self.zoom_level = max(0.1, self.zoom_level / 1.1)
+                new_zoom = max(0.1, self.zoom_level / 1.1)
+            
+            # 如果缩放级别没有变化，直接返回
+            if abs(new_zoom - old_zoom) < 0.001:
+                return
+            
+            self.zoom_level = new_zoom
+            
+            # 计算以鼠标位置为中心的新滚动位置
+            if x_mouse is not None and self.data_loader.data:
+                time_col = self.data_loader.get_time_column()
+                if time_col:
+                    time_data = self.data_loader.data[time_col]
+                    total_points = len(time_data)
+                    
+                    if total_points > 0:
+                        # 计算鼠标位置对应的数据索引
+                        mouse_idx = 0
+                        for i, t in enumerate(time_data):
+                            if t is not None and t >= x_mouse:
+                                mouse_idx = i
+                                break
+                        
+                        # 计算新的可见范围
+                        visible_points = max(1, int(total_points / self.zoom_level))
+                        
+                        # 计算新的滚动位置，使鼠标位置保持在相对相同的位置
+                        new_start = max(0, min(mouse_idx - visible_points // 2, total_points - visible_points))
+                        self.scroll_position = new_start / max(1, total_points - visible_points)
+                        self.scroll_scale.set(self.scroll_position * 100)
+            
             # 更新界面
             self.zoom_scale.set(self.zoom_level)
             self.zoom_label.config(text=f"{int(self.zoom_level * 100)}%")
@@ -1259,6 +1295,9 @@ class MainApplication:
             
             time_data = loader.data[time_col]
             
+            # 保存时间数据用于鼠标滚轮缩放
+            self._compare_time_data = time_data
+            
             # 计算可见数据点数量
             total_points = len(time_data)
             visible_points = max(1, int(total_points / self.compare_zoom_level))
@@ -1356,18 +1395,51 @@ class MainApplication:
         self._generate_compare_chart()
     
     def _on_compare_mouse_scroll(self, event):
-        """对比图表鼠标滚轮事件处理，用于缩放图表
+        """对比图表鼠标滚轮事件处理，以鼠标位置为中心进行缩放
         
         Args:
             event: 鼠标事件对象
         """
         if event.inaxes:
+            # 获取当前鼠标位置
+            x_mouse = event.xdata
+            
+            # 保存当前的滚动比例（相对于总数据量）
+            old_zoom = self.compare_zoom_level
+            
             # 根据滚轮方向调整缩放级别
             if event.button == 'up':
-                self.compare_zoom_level = min(5.0, self.compare_zoom_level * 1.1)
+                new_zoom = min(5.0, self.compare_zoom_level * 1.1)
             else:
-                self.compare_zoom_level = max(0.1, self.compare_zoom_level / 1.1)
-            # 更新界面并重新生成图表
+                new_zoom = max(0.1, self.compare_zoom_level / 1.1)
+            
+            # 如果缩放级别没有变化，直接返回
+            if abs(new_zoom - old_zoom) < 0.001:
+                return
+            
+            self.compare_zoom_level = new_zoom
+            
+            # 计算以鼠标位置为中心的新滚动位置
+            if x_mouse is not None:
+                # 获取当前显示的数据范围
+                total_points = len(self._compare_time_data) if hasattr(self, '_compare_time_data') else 0
+                if total_points > 0:
+                    # 计算鼠标位置对应的数据索引
+                    mouse_idx = 0
+                    for i, t in enumerate(self._compare_time_data):
+                        if t is not None and t >= x_mouse:
+                            mouse_idx = i
+                            break
+                    
+                    # 计算新的可见范围
+                    visible_points = max(1, int(total_points / self.compare_zoom_level))
+                    
+                    # 计算新的滚动位置，使鼠标位置保持在相对相同的位置
+                    new_start = max(0, min(mouse_idx - visible_points // 2, total_points - visible_points))
+                    self.compare_scroll_position = new_start / max(1, total_points - visible_points)
+                    self.compare_scroll_scale.set(self.compare_scroll_position * 100)
+            
+            # 更新界面
             self.compare_zoom_scale.set(self.compare_zoom_level)
             self.compare_zoom_label.config(text=f"{int(self.compare_zoom_level * 100)}%")
             self._generate_compare_chart()
