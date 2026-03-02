@@ -21,12 +21,6 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.figure import Figure
 import numpy as np
 
-try:
-    from scipy.interpolate import make_interp_spline
-    HAS_SCIPY = True
-except ImportError:
-    HAS_SCIPY = False
-
 from config import Config, get_config
 from dbc_loader import DBCLoader
 from asc_parser import ASCParser
@@ -42,7 +36,8 @@ plt.rcParams['patch.antialiased'] = True
 
 MULTI_SELECT_COLUMNS = [
     'MaxCellTemp', 'MinCellTemp', 'PackSOC', 'HvBusVlt', 
-    'BranchCrnt', 'PackFltLvl', 'MaxCellVlt', 'MinCellVlt'
+    'BranchCrnt', 'PackFltLvl', 'MaxCellVlt', 'MinCellVlt',
+    'PackFltCode', 'PackTotCrnt'
 ]
 
 
@@ -144,11 +139,11 @@ class MainApplication:
         self.scroll_position: float = 0.0
         self.crosshair_enabled: bool = False
         self.output_dir: Optional[str] = None
-        self.smooth_curve: bool = True
         
         self.compare_data_loaders: Dict[str, CSVDataLoader] = {}
         self.compare_files: List[str] = []
         self.compare_columns: List[str] = []
+        self.compare_zoom_level: float = 1.0
         
         self._setup_styles()
         self._create_widgets()
@@ -273,16 +268,6 @@ class MainApplication:
         self.column_combo.pack(side=tk.LEFT, padx=5)
         self.column_combo.bind("<<ComboboxSelected>>", self._on_column_selected)
         
-        self.multi_select_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(column_frame, text="多列显示", variable=self.multi_select_var, 
-                        command=self._on_multi_select_changed).pack(side=tk.LEFT, padx=5)
-        
-        self.multi_column_frame = ttk.Frame(column_frame)
-        
-        self.smooth_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(column_frame, text="平滑曲线", variable=self.smooth_var,
-                        command=self._update_chart).pack(side=tk.LEFT, padx=5)
-        
         zoom_frame = ttk.Frame(control_frame)
         zoom_frame.pack(fill=tk.X, pady=5)
         
@@ -374,8 +359,15 @@ class MainApplication:
         
         ttk.Button(btn_frame, text="生成对比图", command=self._generate_compare_chart).pack(side=tk.LEFT, padx=5)
         
-        self.smooth_compare_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(btn_frame, text="平滑曲线", variable=self.smooth_compare_var).pack(side=tk.LEFT, padx=5)
+        ttk.Label(btn_frame, text="缩放:").pack(side=tk.LEFT, padx=(20, 0))
+        self.compare_zoom_scale = ttk.Scale(btn_frame, from_=0.1, to=5.0, value=1.0,
+                                            orient=tk.HORIZONTAL, length=100,
+                                            command=self._on_compare_zoom_changed)
+        self.compare_zoom_scale.pack(side=tk.LEFT, padx=5)
+        self.compare_zoom_label = ttk.Label(btn_frame, text="100%", width=6)
+        self.compare_zoom_label.pack(side=tk.LEFT)
+        
+        ttk.Button(btn_frame, text="重置", command=self._reset_compare_zoom).pack(side=tk.LEFT, padx=10)
         
         chart_frame = ttk.LabelFrame(compare_frame, text="对比图表", padding="5")
         chart_frame.pack(fill=tk.BOTH, expand=True)
@@ -385,6 +377,8 @@ class MainApplication:
         
         self.compare_canvas = FigureCanvasTkAgg(self.compare_figure, master=chart_frame)
         self.compare_canvas.draw()
+        
+        self.compare_canvas.mpl_connect('scroll_event', self._on_compare_mouse_scroll)
         
         compare_canvas_widget = self.compare_canvas.get_tk_widget()
         compare_canvas_widget.pack(fill=tk.BOTH, expand=True)
@@ -682,10 +676,7 @@ class MainApplication:
         if self.data_loader.load(file_path):
             self.current_file = file_path
             
-            if self.multi_select_var.get():
-                numeric_cols = self.data_loader.get_multi_select_columns()
-            else:
-                numeric_cols = self.data_loader.get_numeric_columns()
+            numeric_cols = self.data_loader.get_numeric_columns()
             
             self.column_combo['values'] = numeric_cols
             if numeric_cols:
@@ -699,10 +690,6 @@ class MainApplication:
     def _on_column_selected(self, event):
         self.current_column = self.column_combo.get()
         self._update_chart()
-    
-    def _on_multi_select_changed(self):
-        if self.current_file:
-            self._load_csv_file(self.current_file)
     
     def _on_zoom_changed(self, value):
         self.zoom_level = float(value)
@@ -829,10 +816,7 @@ class MainApplication:
         
         time_data = self.data_loader.data[time_col]
         
-        if self.multi_select_var.get():
-            selected_columns = self.data_loader.get_multi_select_columns()
-        else:
-            selected_columns = [self.current_column]
+        selected_columns = [self.current_column]
         
         for col in selected_columns:
             if col in self.data_loader.data:
@@ -844,35 +828,6 @@ class MainApplication:
                             return y_data[i]
         
         return None
-    
-    def _smooth_data(self, x_data: List, y_data: List, num_points: int = 300) -> Tuple[np.ndarray, np.ndarray]:
-        """使用样条插值平滑数据"""
-        if not HAS_SCIPY:
-            return np.array(x_data), np.array(y_data)
-        
-        if len(x_data) < 4:
-            return np.array(x_data), np.array(y_data)
-        
-        x_arr = np.array(x_data)
-        y_arr = np.array(y_data)
-        
-        sort_idx = np.argsort(x_arr)
-        x_sorted = x_arr[sort_idx]
-        y_sorted = y_arr[sort_idx]
-        
-        unique_x, unique_idx = np.unique(x_sorted, return_index=True)
-        unique_y = y_sorted[unique_idx]
-        
-        if len(unique_x) < 4:
-            return unique_x, unique_y
-        
-        try:
-            x_new = np.linspace(unique_x.min(), unique_x.max(), num_points)
-            spline = make_interp_spline(unique_x, unique_y, k=3)
-            y_new = spline(x_new)
-            return x_new, y_new
-        except:
-            return unique_x, unique_y
     
     def _update_chart(self):
         if not self.current_column or not self.data_loader.data:
@@ -886,10 +841,7 @@ class MainApplication:
         
         time_data = self.data_loader.data[time_col]
         
-        if self.multi_select_var.get():
-            selected_columns = self.data_loader.get_multi_select_columns()
-        else:
-            selected_columns = [self.current_column]
+        selected_columns = [self.current_column]
         
         total_points = len(time_data)
         visible_points = max(1, int(total_points / self.zoom_level))
@@ -911,20 +863,13 @@ class MainApplication:
                     label = col.split('[')[0] if '[' in col else col
                     label = label.split('::')[-1] if '::' in label else label
                     
-                    if self.smooth_var.get() and len(x_valid) > 10:
-                        x_smooth, y_smooth = self._smooth_data(x_valid, y_valid)
-                        self.ax.plot(x_smooth, y_smooth, label=label, linewidth=2, antialiased=True)
-                    else:
-                        self.ax.plot(x_valid, y_valid, label=label, linewidth=1.5, antialiased=True)
+                    self.ax.plot(x_valid, y_valid, label=label, linewidth=1.5, antialiased=True)
         
         self.ax.set_xlabel(time_col, fontsize=10)
         self.ax.set_ylabel("数值", fontsize=10)
         
         if self.current_file:
             self.ax.set_title(os.path.basename(self.current_file), fontsize=12)
-        
-        if len(selected_columns) > 1:
-            self.ax.legend(loc='upper right', fontsize=8)
         
         self.ax.grid(True, linestyle='--', alpha=0.7)
         
@@ -966,6 +911,11 @@ class MainApplication:
             
             time_data = loader.data[time_col]
             
+            total_points = len(time_data)
+            visible_points = max(1, int(total_points / self.compare_zoom_level))
+            start_idx = max(0, (total_points - visible_points) // 2)
+            end_idx = min(start_idx + visible_points, total_points)
+            
             for target_col in selected_columns:
                 matching_col = None
                 for col in loader.columns:
@@ -976,24 +926,20 @@ class MainApplication:
                 if not matching_col:
                     continue
                 
-                y_data = loader.data[matching_col]
+                y_data = loader.data[matching_col][start_idx:end_idx]
+                x_data = time_data[start_idx:end_idx]
+                
                 valid_indices = [i for i, v in enumerate(y_data) if v is not None]
                 
                 if valid_indices:
-                    x_valid = [time_data[i] for i in valid_indices]
+                    x_valid = [x_data[i] for i in valid_indices]
                     y_valid = [y_data[i] for i in valid_indices]
                     
                     label = f"{file_name.replace('.csv', '')} - {target_col}"
                     
-                    if self.smooth_compare_var.get() and len(x_valid) > 10:
-                        x_smooth, y_smooth = self._smooth_data(x_valid, y_valid)
-                        self.compare_ax.plot(x_smooth, y_smooth, label=label, 
-                                            linewidth=2, color=colors[color_idx % len(colors)],
-                                            antialiased=True)
-                    else:
-                        self.compare_ax.plot(x_valid, y_valid, label=label, 
-                                            linewidth=1.5, color=colors[color_idx % len(colors)],
-                                            antialiased=True)
+                    self.compare_ax.plot(x_valid, y_valid, label=label, 
+                                        linewidth=1.5, color=colors[color_idx % len(colors)],
+                                        antialiased=True)
                     color_idx += 1
         
         self.compare_ax.set_xlabel("时间 [s]", fontsize=10)
@@ -1006,6 +952,26 @@ class MainApplication:
         self.compare_canvas.draw()
         
         self.compare_status_label.config(text=f"已生成对比图 - 文件: {len(file_names)}, 数据列: {len(selected_columns)}")
+    
+    def _on_compare_zoom_changed(self, value):
+        self.compare_zoom_level = float(value)
+        self.compare_zoom_label.config(text=f"{int(self.compare_zoom_level * 100)}%")
+    
+    def _on_compare_mouse_scroll(self, event):
+        if event.inaxes:
+            if event.button == 'up':
+                self.compare_zoom_level = min(5.0, self.compare_zoom_level * 1.1)
+            else:
+                self.compare_zoom_level = max(0.1, self.compare_zoom_level / 1.1)
+            self.compare_zoom_scale.set(self.compare_zoom_level)
+            self.compare_zoom_label.config(text=f"{int(self.compare_zoom_level * 100)}%")
+            self._generate_compare_chart()
+    
+    def _reset_compare_zoom(self):
+        self.compare_zoom_level = 1.0
+        self.compare_zoom_scale.set(1.0)
+        self.compare_zoom_label.config(text="100%")
+        self._generate_compare_chart()
     
     def _on_closing(self):
         if self.is_converting:
