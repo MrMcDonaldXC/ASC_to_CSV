@@ -200,6 +200,8 @@ class MainApplication:
         self.scroll_position: float = 0.0     # 水平滚动位置
         self.crosshair_enabled: bool = False   # 十字参考线启用状态
         self.output_dir: Optional[str] = None  # 输出目录
+        self._all_columns: List[str] = []      # 所有可用的数据列（用于搜索筛选）
+        self._search_placeholder: str = "搜索列名..."  # 搜索框占位符
         
         # 数据对比相关
         self.compare_data_loaders: Dict[str, CSVDataLoader] = {}  # 对比文件的数据加载器
@@ -373,9 +375,24 @@ class MainApplication:
         column_frame.pack(fill=tk.X, pady=5)
         
         ttk.Label(column_frame, text="数据列:").pack(side=tk.LEFT)
+        
+        # 搜索输入框
+        self.column_search_var = tk.StringVar()
+        self.column_search_var.trace_add("write", self._on_column_search_changed)
+        self.column_search_entry = ttk.Entry(column_frame, textvariable=self.column_search_var, width=20)
+        self.column_search_entry.pack(side=tk.LEFT, padx=5)
+        self.column_search_entry.insert(0, "搜索列名...")
+        self.column_search_entry.bind("<FocusIn>", self._on_search_focus_in)
+        self.column_search_entry.bind("<FocusOut>", self._on_search_focus_out)
+        
+        # 数据列下拉框
         self.column_combo = ttk.Combobox(column_frame, width=50, state="readonly")
         self.column_combo.pack(side=tk.LEFT, padx=5)
         self.column_combo.bind("<<ComboboxSelected>>", self._on_column_selected)
+        
+        # 搜索状态标签
+        self.column_search_status = ttk.Label(column_frame, text="", width=20)
+        self.column_search_status.pack(side=tk.LEFT, padx=5)
         
         # 缩放和滚动控制区域
         zoom_frame = ttk.Frame(control_frame)
@@ -953,16 +970,67 @@ class MainApplication:
             # 获取数值列
             numeric_cols = self.data_loader.get_numeric_columns()
             
+            # 保存所有列用于搜索筛选
+            self._all_columns = numeric_cols
+            
             # 更新列选择下拉框
             self.column_combo['values'] = numeric_cols
             if numeric_cols:
                 self.column_combo.set(numeric_cols[0])
                 self.current_column = numeric_cols[0]
+            
+            # 更新搜索状态
+            self.column_search_status.config(text=f"共 {len(numeric_cols)} 列")
+            
+            # 清空搜索框
+            self.column_search_var.set(self._search_placeholder)
+            
             # 更新图表
             self._update_chart()
             self.status_label.config(text=f"已加载: {os.path.basename(file_path)}")
         else:
             self.status_label.config(text="加载失败")
+    
+    def _on_column_search_changed(self, *args):
+        """列搜索内容变化事件处理，实时筛选数据列"""
+        search_text = self.column_search_var.get().lower()
+        
+        # 如果是占位符文本，不进行搜索
+        if search_text == self._search_placeholder.lower():
+            return
+        
+        # 如果搜索框为空，显示所有列
+        if not search_text:
+            self.column_combo['values'] = self._all_columns
+            self.column_search_status.config(text=f"共 {len(self._all_columns)} 列")
+            return
+        
+        # 筛选包含搜索文本的列（不区分大小写）
+        filtered_columns = [col for col in self._all_columns if search_text in col.lower()]
+        
+        # 更新下拉框选项
+        self.column_combo['values'] = filtered_columns
+        
+        # 更新搜索状态
+        if filtered_columns:
+            self.column_search_status.config(text=f"找到 {len(filtered_columns)} 列")
+            # 如果只有一个匹配项，自动选中
+            if len(filtered_columns) == 1:
+                self.column_combo.set(filtered_columns[0])
+                self.current_column = filtered_columns[0]
+                self._update_chart()
+        else:
+            self.column_search_status.config(text="无匹配结果")
+    
+    def _on_search_focus_in(self, event):
+        """搜索框获得焦点时清除占位符"""
+        if self.column_search_var.get() == self._search_placeholder:
+            self.column_search_var.set("")
+    
+    def _on_search_focus_out(self, event):
+        """搜索框失去焦点时恢复占位符"""
+        if not self.column_search_var.get():
+            self.column_search_var.set(self._search_placeholder)
     
     def _on_column_selected(self, event):
         """列选择事件处理
