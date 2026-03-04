@@ -1,0 +1,404 @@
+# asc_to_csv/ui/visualize_tab.py
+"""
+数据可视化标签页模块
+提供CSV数据的可视化功能界面
+"""
+
+import os
+import time
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+from typing import Optional, List, Dict, Any
+
+from .base import BaseTab
+from core.csv_loader import CSVDataLoader
+from core.chart_manager import ChartManager
+
+
+class VisualizeTab(BaseTab):
+    """
+    数据可视化标签页
+    
+    提供CSV数据的图表可视化功能
+    
+    Attributes:
+        data_loader: CSV数据加载器
+        chart_manager: 图表管理器
+        current_file: 当前加载的文件路径
+        current_column: 当前选择的数据列
+    """
+    
+    def __init__(self, parent: tk.Widget, app_context: dict):
+        """
+        初始化可视化标签页
+        
+        Args:
+            parent: 父容器
+            app_context: 应用上下文
+        """
+        self.data_loader = CSVDataLoader()
+        self.chart_manager: Optional[ChartManager] = None
+        self.current_file: Optional[str] = None
+        self.current_column: Optional[str] = None
+        
+        self.zoom_level: float = 1.0
+        self.scroll_position: float = 0.0
+        self.crosshair_enabled: bool = False
+        
+        self._all_columns: List[str] = []
+        self._search_placeholder: str = "搜索列名..."
+        
+        self._chart_update_pending: bool = False
+        self._last_chart_update: float = 0
+        self._debounce_delay: int = 50
+        
+        self._last_mouse_move_time: float = 0
+        self._mouse_move_throttle: int = 30  # 鼠标移动节流间隔（毫秒）
+        
+        self.file_combo: Optional[ttk.Combobox] = None
+        self.column_combo: Optional[ttk.Combobox] = None
+        self.column_search_var: Optional[tk.StringVar] = None
+        self.column_search_entry: Optional[ttk.Entry] = None
+        self.column_search_status: Optional[ttk.Label] = None
+        self.zoom_scale: Optional[ttk.Scale] = None
+        self.zoom_label: Optional[ttk.Label] = None
+        self.scroll_scale: Optional[ttk.Scale] = None
+        self.crosshair_var: Optional[tk.BooleanVar] = None
+        self.status_label: Optional[ttk.Label] = None
+        self.coord_label: Optional[ttk.Label] = None
+        
+        super().__init__(parent, app_context)
+    
+    def _create_widgets(self):
+        """创建界面组件"""
+        control_frame = ttk.LabelFrame(self, text="控制面板", padding="10")
+        control_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        self._create_file_section(control_frame)
+        self._create_column_section(control_frame)
+        self._create_zoom_section(control_frame)
+        
+        chart_frame = ttk.LabelFrame(self, text="数据图表", padding="5")
+        chart_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.chart_manager = ChartManager(chart_frame)
+        self.chart_manager.get_widget().pack(fill=tk.BOTH, expand=True)
+        self.chart_manager.add_toolbar(chart_frame)
+        
+        self.chart_manager.bind_scroll(self._on_mouse_scroll)
+        self.chart_manager.bind_motion(self._on_mouse_move)
+        
+        status_frame = ttk.Frame(self)
+        status_frame.pack(fill=tk.X, pady=(5, 0))
+        self.status_label = ttk.Label(status_frame, text="请选择CSV文件")
+        self.status_label.pack(side=tk.LEFT)
+        self.coord_label = ttk.Label(status_frame, text="")
+        self.coord_label.pack(side=tk.RIGHT)
+    
+    def _create_file_section(self, parent: ttk.Frame):
+        """创建文件选择区域"""
+        file_frame = ttk.Frame(parent)
+        file_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(file_frame, text="CSV文件:").pack(side=tk.LEFT)
+        self.file_combo = ttk.Combobox(file_frame, width=50, state="readonly")
+        self.file_combo.pack(side=tk.LEFT, padx=5)
+        self.file_combo.bind("<<ComboboxSelected>>", self._on_file_selected)
+        
+        ttk.Button(file_frame, text="刷新目录", command=self._refresh_csv_files).pack(side=tk.LEFT, padx=5)
+    
+    def _create_column_section(self, parent: ttk.Frame):
+        """创建数据列选择区域"""
+        column_frame = ttk.Frame(parent)
+        column_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(column_frame, text="数据列:").pack(side=tk.LEFT)
+        
+        self.column_search_var = tk.StringVar()
+        self.column_search_var.trace_add("write", self._on_column_search_changed)
+        self.column_search_entry = ttk.Entry(column_frame, textvariable=self.column_search_var, width=20)
+        self.column_search_entry.pack(side=tk.LEFT, padx=5)
+        self.column_search_entry.insert(0, self._search_placeholder)
+        self.column_search_entry.bind("<FocusIn>", self._on_search_focus_in)
+        self.column_search_entry.bind("<FocusOut>", self._on_search_focus_out)
+        
+        self.column_combo = ttk.Combobox(column_frame, width=50, state="readonly")
+        self.column_combo.pack(side=tk.LEFT, padx=5)
+        self.column_combo.bind("<<ComboboxSelected>>", self._on_column_selected)
+        
+        self.column_search_status = ttk.Label(column_frame, text="", width=20)
+        self.column_search_status.pack(side=tk.LEFT, padx=5)
+    
+    def _create_zoom_section(self, parent: ttk.Frame):
+        """创建缩放控制区域"""
+        zoom_frame = ttk.Frame(parent)
+        zoom_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(zoom_frame, text="缩放:").pack(side=tk.LEFT)
+        self.zoom_scale = ttk.Scale(zoom_frame, from_=0.1, to=5.0, value=1.0,
+                                     orient=tk.HORIZONTAL, length=150,
+                                     command=self._on_zoom_changed)
+        self.zoom_scale.pack(side=tk.LEFT, padx=5)
+        self.zoom_label = ttk.Label(zoom_frame, text="100%", width=6)
+        self.zoom_label.pack(side=tk.LEFT)
+        
+        ttk.Button(zoom_frame, text="重置", command=self._reset_zoom).pack(side=tk.LEFT, padx=10)
+        
+        ttk.Label(zoom_frame, text="水平滚动:").pack(side=tk.LEFT, padx=(20, 0))
+        self.scroll_scale = ttk.Scale(zoom_frame, from_=0, to=100, value=0,
+                                       orient=tk.HORIZONTAL, length=150,
+                                       command=self._on_scroll_changed)
+        self.scroll_scale.pack(side=tk.LEFT, padx=5)
+        
+        self.crosshair_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(zoom_frame, text="显示十字参考线", variable=self.crosshair_var,
+                        command=self._toggle_crosshair).pack(side=tk.LEFT, padx=20)
+    
+    def _on_file_selected(self, event):
+        """文件选择事件处理"""
+        file_name = self.file_combo.get()
+        if not file_name:
+            return
+        
+        output_dir = self.app_context.get('output_dir', '')
+        if not output_dir:
+            return
+        
+        file_path = os.path.join(output_dir, file_name)
+        self._load_csv_file(file_path)
+    
+    def _load_csv_file(self, file_path: str):
+        """加载CSV文件"""
+        self.status_label.config(text=f"正在加载: {os.path.basename(file_path)}...")
+        self.app_context['root'].update()
+        
+        if self.data_loader.load(file_path):
+            self.current_file = file_path
+            
+            numeric_cols = self.data_loader.get_numeric_columns()
+            self._all_columns = numeric_cols
+            
+            self.column_combo['values'] = numeric_cols
+            if numeric_cols:
+                self.column_combo.set(numeric_cols[0])
+                self.current_column = numeric_cols[0]
+            
+            self.column_search_status.config(text=f"共 {len(numeric_cols)} 列")
+            self.column_search_var.set(self._search_placeholder)
+            
+            self._update_chart()
+            self.status_label.config(text=f"已加载: {os.path.basename(file_path)}")
+        else:
+            self.status_label.config(text="加载失败")
+    
+    def _on_column_search_changed(self, *args):
+        """列搜索内容变化事件处理"""
+        search_text = self.column_search_var.get().lower()
+        
+        if search_text == self._search_placeholder.lower():
+            return
+        
+        if not search_text:
+            self.column_combo['values'] = self._all_columns
+            self.column_search_status.config(text=f"共 {len(self._all_columns)} 列")
+            return
+        
+        filtered_columns = [col for col in self._all_columns if search_text in col.lower()]
+        
+        self.column_combo['values'] = filtered_columns
+        
+        if filtered_columns:
+            self.column_search_status.config(text=f"找到 {len(filtered_columns)} 列")
+            if len(filtered_columns) == 1:
+                self.column_combo.set(filtered_columns[0])
+                self.current_column = filtered_columns[0]
+                self._update_chart()
+        else:
+            self.column_search_status.config(text="无匹配结果")
+    
+    def _on_search_focus_in(self, event):
+        """搜索框获得焦点"""
+        if self.column_search_var.get() == self._search_placeholder:
+            self.column_search_var.set("")
+    
+    def _on_search_focus_out(self, event):
+        """搜索框失去焦点"""
+        if not self.column_search_var.get():
+            self.column_search_var.set(self._search_placeholder)
+    
+    def _on_column_selected(self, event):
+        """列选择事件处理"""
+        self.current_column = self.column_combo.get()
+        self._update_chart()
+    
+    def _on_zoom_changed(self, value):
+        """缩放变化事件处理"""
+        self.zoom_level = float(value)
+        self.zoom_label.config(text=f"{int(self.zoom_level * 100)}%")
+        self._debounce_chart_update()
+    
+    def _on_scroll_changed(self, value):
+        """滚动位置变化事件处理"""
+        self.scroll_position = float(value) / 100.0
+        self._debounce_chart_update()
+    
+    def _debounce_chart_update(self):
+        """防抖更新图表"""
+        current_time = time.time() * 1000
+        
+        if current_time - self._last_chart_update < self._debounce_delay:
+            if not self._chart_update_pending:
+                self._chart_update_pending = True
+                self.app_context['root'].after(self._debounce_delay, self._do_chart_update)
+        else:
+            self._do_chart_update()
+    
+    def _do_chart_update(self):
+        """执行图表更新"""
+        self._chart_update_pending = False
+        self._last_chart_update = time.time() * 1000
+        self._update_chart()
+    
+    def _update_chart(self):
+        """更新图表"""
+        if not self.current_column or not self.data_loader.data:
+            return
+        
+        self.chart_manager.clear()
+        
+        time_col = self.data_loader.get_time_column()
+        if not time_col:
+            return
+        
+        time_data = self.data_loader.data[time_col]
+        
+        total_points = len(time_data)
+        visible_points = max(1, int(total_points / self.zoom_level))
+        
+        start_idx = int(self.scroll_position * (total_points - visible_points))
+        start_idx = max(0, min(start_idx, total_points - visible_points))
+        end_idx = min(start_idx + visible_points, total_points)
+        
+        if self.current_column in self.data_loader.data:
+            y_data = self.data_loader.data[self.current_column][start_idx:end_idx]
+            x_data = time_data[start_idx:end_idx]
+            
+            valid_indices = [i for i, v in enumerate(y_data) if v is not None]
+            
+            if valid_indices:
+                label = self.current_column.split('[')[0] if '[' in self.current_column else self.current_column
+                label = label.split('::')[-1] if '::' in label else label
+                
+                self.chart_manager.plot_segments(
+                    x_data, y_data, label=label,
+                    linewidth=1.5, antialiased=True
+                )
+        
+        self.chart_manager.set_labels(time_col, "数值", 
+                                       os.path.basename(self.current_file) if self.current_file else "")
+        self.chart_manager.add_legend()
+        self.chart_manager.add_grid()
+        
+        self.chart_manager.clear_crosshair()
+        self.chart_manager.update()
+    
+    def _on_mouse_scroll(self, event):
+        """鼠标滚轮事件处理"""
+        if event.inaxes:
+            x_mouse = event.xdata
+            old_zoom = self.zoom_level
+            
+            if event.button == 'up':
+                new_zoom = min(5.0, self.zoom_level * 1.1)
+            else:
+                new_zoom = max(0.1, self.zoom_level / 1.1)
+            
+            if abs(new_zoom - old_zoom) < 0.001:
+                return
+            
+            self.zoom_level = new_zoom
+            
+            if x_mouse is not None and self.data_loader.data:
+                time_col = self.data_loader.get_time_column()
+                if time_col:
+                    time_data = self.data_loader.data[time_col]
+                    total_points = len(time_data)
+                    
+                    if total_points > 0:
+                        mouse_idx = 0
+                        for i, t in enumerate(time_data):
+                            if t is not None and t >= x_mouse:
+                                mouse_idx = i
+                                break
+                        
+                        visible_points = max(1, int(total_points / self.zoom_level))
+                        new_start = max(0, min(mouse_idx - visible_points // 2, total_points - visible_points))
+                        self.scroll_position = new_start / max(1, total_points - visible_points)
+                        self.scroll_scale.set(self.scroll_position * 100)
+            
+            self.zoom_scale.set(self.zoom_level)
+            self.zoom_label.config(text=f"{int(self.zoom_level * 100)}%")
+            self._update_chart()
+    
+    def _on_mouse_move(self, event):
+        """鼠标移动事件处理（带节流优化）"""
+        current_time = time.time() * 1000
+        
+        # 节流：限制更新频率
+        if current_time - self._last_mouse_move_time < self._mouse_move_throttle:
+            return
+        
+        self._last_mouse_move_time = current_time
+        
+        if not event.inaxes:
+            self.chart_manager.clear_crosshair()
+            self.coord_label.config(text="")
+            self.chart_manager.draw_idle()
+            return
+        
+        x_mouse, y_mouse = event.xdata, event.ydata
+        if x_mouse is None or y_mouse is None:
+            return
+        
+        if self.crosshair_enabled:
+            self.chart_manager.update_crosshair(x_mouse, y_mouse)
+            self.coord_label.config(text=f"坐标: X={x_mouse:.4f}, Y={y_mouse:.4f}")
+        else:
+            self.chart_manager.clear_crosshair()
+            self.coord_label.config(text=f"坐标: X={x_mouse:.4f}, Y={y_mouse:.4f}")
+        
+        self.chart_manager.draw_idle()
+    
+    def _reset_zoom(self):
+        """重置缩放和滚动位置"""
+        self.zoom_level = 1.0
+        self.scroll_position = 0.0
+        self.zoom_scale.set(1.0)
+        self.scroll_scale.set(0)
+        self.zoom_label.config(text="100%")
+        self._update_chart()
+    
+    def _toggle_crosshair(self):
+        """切换十字参考线显示状态"""
+        self.crosshair_enabled = self.crosshair_var.get()
+        if not self.crosshair_enabled:
+            self.chart_manager.clear_crosshair()
+            self.coord_label.config(text="")
+            self.chart_manager.draw_idle()
+    
+    def refresh_files(self):
+        """刷新文件列表"""
+        self._refresh_csv_files()
+    
+    def _refresh_csv_files(self):
+        """刷新CSV文件列表"""
+        output_dir = self.app_context.get('output_dir', '')
+        if not output_dir or not os.path.exists(output_dir):
+            return
+        
+        csv_files = [f for f in os.listdir(output_dir) if f.endswith('.csv')]
+        self.file_combo['values'] = csv_files
+        
+        if csv_files:
+            self.file_combo.set(csv_files[0])
+            self._on_file_selected(None)
