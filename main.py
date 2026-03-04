@@ -5,10 +5,7 @@
 """
 
 from config import Config, get_default_config
-from dbc_loader import DBCLoader
-from asc_parser import ASCParser
-from data_processor import DataProcessor
-from csv_writer import CSVWriter
+from conversion_service import ConversionService, ConversionResult
 
 
 class ASCToCSVConverter:
@@ -26,10 +23,7 @@ class ASCToCSVConverter:
             config: 配置对象，如果为None则使用默认配置
         """
         self.config = config or get_default_config()
-        self.dbc_loader = DBCLoader()
-        self.asc_parser = None
-        self.data_processor = DataProcessor()
-        self.csv_writer = None
+        self.service = ConversionService(self.config)
     
     def run(self) -> bool:
         """
@@ -38,75 +32,25 @@ class ASCToCSVConverter:
         Returns:
             bool: 是否成功完成转换
         """
-        # 打印配置信息
         self._print_config()
         
-        # 验证配置
-        if not self.config.validate():
+        result = self.service.convert(log_callback=self._log)
+        
+        if result.success:
+            self._print_summary(result)
+            return True
+        else:
+            print(f"\n❌ 转换失败！{result.error_message}")
             return False
+    
+    def _log(self, message: str):
+        """
+        日志输出
         
-        # 创建输出目录
-        self.config.create_output_dir()
-        
-        # 加载DBC文件
-        print("\n正在加载DBC文件...")
-        if not self.dbc_loader.load(self.config.dbc_files):
-            return False
-        
-        print(f"\n总消息定义数: {self.dbc_loader.get_message_count()}")
-        print(f"总信号定义数: {self.dbc_loader.get_signal_count()}")
-        
-        # 解析ASC文件
-        print("\n正在解析ASC文件...")
-        self.asc_parser = ASCParser(
-            sample_interval=self.config.sample_interval,
-            debug=self.config.debug
-        )
-        if not self.asc_parser.parse(self.config.asc_file, self.dbc_loader.message_map):
-            return False
-        
-        # 打印解析统计
-        original_count, sampled_count, signal_count = self.asc_parser.get_statistics()
-        print(f"\n解析完成：")
-        print(f"  原始数据点数: {original_count}")
-        print(f"  采样后时间点数: {sampled_count}")
-        print(f"  实际信号数: {signal_count}")
-        
-        # 处理数据
-        print("\n正在处理数据...")
-        self.data_processor.aggregate(self.asc_parser.sampled_data)
-        self.data_processor.classify_signals(self.asc_parser.found_signals)
-        
-        # 打印分组结果
-        print("\n分组结果：")
-        for group_name, count in self.data_processor.get_group_statistics().items():
-            print(f"  {group_name}: {count}个信号")
-        
-        # 写入CSV文件
-        print("\n正在创建CSV文件...")
-        self.csv_writer = CSVWriter(
-            output_dir=self.config.output_dir,
-            encoding=self.config.csv_encoding,
-            group_size=self.config.group_size
-        )
-        
-        created_files = self.csv_writer.write_all(
-            sorted_groups=self.data_processor.sorted_groups,
-            classified_signals=self.data_processor.classified_signals,
-            sorted_timestamps=self.data_processor.get_sorted_timestamps(),
-            aggregated_data=self.data_processor.aggregated_data,
-            signal_info=self.dbc_loader.signal_info,
-            statistics={
-                'original_count': original_count,
-                'sampled_count': sampled_count,
-                'signal_count': signal_count
-            }
-        )
-        
-        # 打印完成信息
-        self._print_summary(created_files)
-        
-        return True
+        Args:
+            message: 日志消息
+        """
+        print(message)
     
     def _print_config(self) -> None:
         """打印配置信息"""
@@ -117,36 +61,33 @@ class ASCToCSVConverter:
         print(f"输出格式: CSV文件")
         print(f"文件编码: {self.config.csv_encoding}")
     
-    def _print_summary(self, created_files: list) -> None:
+    def _print_summary(self, result: ConversionResult) -> None:
         """
         打印转换摘要
         
         Args:
-            created_files: 创建的文件列表
+            result: 转换结果
         """
         print(f"\n✅ 转换完成！")
-        print(f"输出目录: {self.config.output_dir}")
-        print(f"生成文件数: {len(created_files)}")
+        print(f"输出目录: {result.output_dir}")
+        print(f"生成文件数: {len(result.created_files)}")
         
         print(f"\n生成的文件：")
         print(f"  1. Summary.csv - 汇总报告")
         print(f"  2. All_Signals.csv - 所有信号总览")
-        for i, group_name in enumerate(self.data_processor.sorted_groups, 3):
-            signal_count = len(self.data_processor.classified_signals[group_name])
+        for i, group_name in enumerate(self.service.get_sorted_groups(), 3):
+            signal_count = result.group_statistics.get(group_name, 0)
             print(f"  {i}. {group_name}.csv - {signal_count}个信号")
 
 
 def main():
     """主函数"""
-    # 使用默认配置
     config = get_default_config()
     
-    # 创建转换器并运行
     converter = ASCToCSVConverter(config)
     success = converter.run()
     
     if not success:
-        print("\n❌ 转换失败！")
         return 1
     
     return 0

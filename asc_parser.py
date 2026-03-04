@@ -9,7 +9,6 @@ import re
 import gc
 import os
 from typing import Dict, Set, Tuple, Optional, Callable
-from collections import defaultdict
 import cantools
 
 

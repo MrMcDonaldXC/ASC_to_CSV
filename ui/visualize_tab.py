@@ -7,7 +7,7 @@
 import os
 import time
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, messagebox
 from typing import Optional, List, Dict, Any
 
 from .base import BaseTab

@@ -5,7 +5,7 @@
 """
 
 import tkinter as tk
-from typing import Dict, List, Optional, Tuple, Any
+from typing import List, Optional, Tuple, Any
 import numpy as np
 
 import matplotlib

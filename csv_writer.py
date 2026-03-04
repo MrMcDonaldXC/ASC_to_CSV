@@ -7,7 +7,7 @@ CSV文件输出模块
 
 import os
 import csv
-from typing import Dict, List, Set, Any, Optional
+from typing import Dict, List, Any, Optional
 from collections import defaultdict
 
 from utils import safe_value

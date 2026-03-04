@@ -12,3 +12,4 @@ from .dbc_loader import DBCLoader
 from .asc_parser import ASCParser
 from .data_processor import DataProcessor
 from .csv_writer import CSVWriter
+from .conversion_service import ConversionService, ConversionResult

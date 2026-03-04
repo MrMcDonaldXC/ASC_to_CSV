@@ -8,17 +8,13 @@ import os
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from typing import Optional, List
-import csv
-import gc
+from typing import Optional
+import json
 import traceback
 
 from .base import BaseTab, LogMixin
 from config import Config
-from dbc_loader import DBCLoader
-from asc_parser import ASCParser
-from data_processor import DataProcessor
-from csv_writer import CSVWriter
+from conversion_service import ConversionService
 
 
 class ConvertTab(BaseTab, LogMixin):
@@ -171,7 +167,6 @@ class ConvertTab(BaseTab, LogMixin):
     
     def _save_config(self):
         """保存配置"""
-        import json
         config_data = {
             "asc_file": self.asc_entry.get(),
             "dbc_files": list(self.dbc_listbox.get(0, tk.END)),
@@ -247,10 +242,6 @@ class ConvertTab(BaseTab, LogMixin):
     
     def _do_convert(self):
         """执行转换（后台线程）"""
-        dbc_loader = None
-        asc_parser = None
-        data_processor = None
-        
         try:
             config = Config(
                 asc_file=self.asc_entry.get(),
@@ -261,74 +252,26 @@ class ConvertTab(BaseTab, LogMixin):
                 debug=self.debug_var.get()
             )
             
-            self._log("开始转换...")
-            self._log(f"采样间隔: {config.sample_interval}秒")
-            self._log("")
-            
-            self._log("正在加载DBC文件...")
-            dbc_loader = DBCLoader()
-            if not dbc_loader.load(config.dbc_files):
-                self._log("DBC文件加载失败")
-                return
-            
-            self._log(f"总消息定义数: {dbc_loader.get_message_count()}")
-            self._log(f"总信号定义数: {dbc_loader.get_signal_count()}")
-            self._log("")
-            
-            self._log("正在解析ASC文件...")
-            self._log("进度: 0%")
+            service = ConversionService(config)
             
             def progress_callback(progress: float, line_count: int):
                 self.app_context['root'].after(0, 
                     lambda: self._update_progress_display(progress, line_count))
             
-            asc_parser = ASCParser(sample_interval=config.sample_interval, debug=config.debug)
-            if not asc_parser.parse(config.asc_file, dbc_loader.message_map, progress_callback):
-                self._log("ASC文件解析失败")
-                return
-            
-            original_count, sampled_count, signal_count = asc_parser.get_statistics()
-            self._log(f"解析完成：原始数据点数: {original_count}, 采样后时间点数: {sampled_count}, 实际信号数: {signal_count}")
-            self._log("")
-            
-            self._log("正在处理数据...")
-            data_processor = DataProcessor()
-            data_processor.aggregate(asc_parser.sampled_data)
-            data_processor.classify_signals(asc_parser.found_signals)
-            self._log("")
-            
-            self._log("正在创建CSV文件...")
-            config.create_output_dir()
-            csv_writer = CSVWriter(
-                output_dir=config.output_dir,
-                encoding=config.csv_encoding,
-                group_size=config.group_size
+            result = service.convert(
+                progress_callback=progress_callback,
+                log_callback=self._log
             )
             
-            created_files = csv_writer.write_all(
-                sorted_groups=data_processor.sorted_groups,
-                classified_signals=data_processor.classified_signals,
-                sorted_timestamps=data_processor.get_sorted_timestamps(),
-                aggregated_data=data_processor.aggregated_data,
-                signal_info=dbc_loader.signal_info,
-                statistics={
-                    'original_count': original_count,
-                    'sampled_count': sampled_count,
-                    'signal_count': signal_count
-                }
-            )
-            
-            self._log("")
-            self._log("=" * 60)
-            self._log("转换完成！")
-            self._log(f"输出目录: {config.output_dir}")
-            self._log(f"总计生成 {len(created_files)} 个文件")
-            self._log("=" * 60)
-            
-            self.app_context['output_dir'] = config.output_dir
-            self.app_context['root'].after(0, lambda: self.app_context.get('refresh_callback', lambda: None)())
-            self.app_context['root'].after(0, 
-                lambda: messagebox.showinfo("成功", f"转换完成！\n输出目录: {config.output_dir}"))
+            if result.success:
+                self.app_context['output_dir'] = result.output_dir
+                self.app_context['root'].after(0, 
+                    lambda: self.app_context.get('refresh_callback', lambda: None)())
+                self.app_context['root'].after(0, 
+                    lambda: messagebox.showinfo("成功", f"转换完成！\n输出目录: {result.output_dir}"))
+            else:
+                self.app_context['root'].after(0, 
+                    lambda: messagebox.showerror("错误", f"转换失败: {result.error_message}"))
             
         except Exception as e:
             error_msg = f"{type(e).__name__}: {e}"
@@ -339,12 +282,6 @@ class ConvertTab(BaseTab, LogMixin):
                 lambda: messagebox.showerror("错误", f"转换失败: {error_msg}"))
         
         finally:
-            if asc_parser:
-                asc_parser.clear()
-            if data_processor:
-                data_processor.clear()
-            gc.collect()
-            
             self.app_context['is_converting'] = False
             self.app_context['root'].after(0, 
                 lambda: self.convert_btn.configure(state=tk.NORMAL))

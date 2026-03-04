@@ -18,12 +18,30 @@ if errorlevel 1 (
     pip install pyinstaller
 )
 
-echo [STEP 1] Cleaning old build files...
+python -c "from PIL import Image" >nul 2>&1
+if errorlevel 1 (
+    echo [INFO] Installing Pillow for icon conversion...
+    pip install Pillow
+)
+
+echo [STEP 1] Converting icon...
+if exist "resource\icon.png" (
+    if not exist "resource\icon.ico" (
+        python convert_icon.py
+    ) else (
+        echo Icon already exists, skipping conversion.
+    )
+) else (
+    echo [WARNING] icon.png not found, building without custom icon.
+)
+echo.
+
+echo [STEP 2] Cleaning old build files...
 if exist "build" rmdir /s /q "build"
 if exist "dist" rmdir /s /q "dist"
 echo.
 
-echo [STEP 2] Building executable...
+echo [STEP 3] Building executable...
 echo Please wait, this may take a few minutes...
 echo.
 
@@ -43,6 +61,14 @@ echo ========================================
 echo.
 echo Output: dist\ASCtoCSV.exe
 echo.
+
+if exist "resource\icon.ico" (
+    echo Icon: resource\icon.ico (applied)
+) else (
+    echo Icon: Default (no custom icon)
+)
+echo.
+
 echo Usage:
 echo   1. Copy dist\ASCtoCSV.exe to any folder
 echo   2. Double-click to run

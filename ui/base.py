@@ -6,7 +6,7 @@
 
 import tkinter as tk
 from tkinter import ttk
-from typing import Optional, Callable
+from typing import Optional
 
 
 class BaseTab(ttk.Frame):
