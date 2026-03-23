@@ -2,10 +2,16 @@
 """
 CSV数据加载器模块
 负责加载和解析CSV文件，提供数据访问接口
+
+优化版本：
+- 支持多种编码自动检测
+- 使用正则预检优化类型推断
+- 支持分块加载降低内存占用
 """
 
 import csv
-from typing import Dict, List, Optional
+import re
+from typing import Dict, List, Optional, Iterator, Tuple
 
 
 MULTI_SELECT_COLUMNS = [
@@ -25,88 +31,243 @@ class CSVDataLoader:
         data: 列名到数据列表的映射字典
         columns: 列名列表
         row_count: 数据行数
+        total_rows: 文件总行数（分块加载时使用）
     """
+    
+    SUPPORTED_ENCODINGS = ['utf-8-sig', 'utf-8', 'gbk', 'gb2312', 'latin-1']
+    
+    _NUMERIC_PATTERN = re.compile(r'^-?\d+\.?\d*(?:[eE][+-]?\d+)?$')
     
     def __init__(self):
         """初始化数据加载器"""
         self.data: Dict[str, List] = {}
         self.columns: List[str] = []
         self.row_count: int = 0
+        self.total_rows: int = 0
+        self._file_path: str = ""
+        self._encoding: str = ""
+        self._chunk_size: Optional[int] = None
+        self._loaded_chunks: int = 0
+        self._has_more_data: bool = False
     
-    def load(self, file_path: str, encoding: str = 'utf-8-sig') -> bool:
+    def load(self, file_path: str, encoding: str = None, 
+             chunk_size: int = None) -> bool:
         """
         加载CSV文件
         
         Args:
             file_path: CSV文件路径
-            encoding: 文件编码，默认为utf-8-sig
+            encoding: 文件编码，None则自动检测
+            chunk_size: 分块大小，None表示全部加载
             
         Returns:
             bool: 是否成功加载
         """
+        self._reset_state()
+        self._file_path = file_path
+        self._chunk_size = chunk_size
+        
+        if encoding:
+            self._encoding = encoding
+            if chunk_size:
+                return self._load_chunk(0, chunk_size)
+            else:
+                return self._load_with_encoding(file_path, encoding)
+        
+        for enc in self.SUPPORTED_ENCODINGS:
+            try:
+                if chunk_size:
+                    if self._load_chunk(0, chunk_size):
+                        self._encoding = enc
+                        return True
+                else:
+                    if self._load_with_encoding(file_path, enc):
+                        self._encoding = enc
+                        return True
+            except UnicodeDecodeError:
+                continue
+            except Exception:
+                continue
+        
+        return False
+    
+    def _reset_state(self):
+        """重置加载器状态"""
         self.data = {}
         self.columns = []
         self.row_count = 0
+        self.total_rows = 0
+        self._loaded_chunks = 0
+        self._has_more_data = False
+    
+    def _load_with_encoding(self, file_path: str, encoding: str) -> bool:
+        """
+        使用指定编码加载文件
         
-        try:
-            with open(file_path, 'r', newline='', encoding=encoding) as f:
-                reader = csv.reader(f)
-                self.columns = next(reader)
-                
-                for col in self.columns:
-                    self.data[col] = []
-                
-                for row in reader:
-                    if len(row) != len(self.columns):
-                        continue
-                    
-                    for i, value in enumerate(row):
-                        col_name = self.columns[i]
-                        try:
-                            if value == '' or value.strip() == '':
-                                self.data[col_name].append(None)
-                            else:
-                                self.data[col_name].append(float(value))
-                        except ValueError:
-                            self.data[col_name].append(value)
-                    
-                    self.row_count += 1
+        Args:
+            file_path: 文件路径
+            encoding: 文件编码
             
-            return True
+        Returns:
+            bool: 是否成功加载
+        """
+        with open(file_path, 'r', newline='', encoding=encoding) as f:
+            reader = csv.reader(f)
             
-        except FileNotFoundError:
-            return False
-        except UnicodeDecodeError:
             try:
-                with open(file_path, 'r', newline='', encoding='gbk') as f:
-                    reader = csv.reader(f)
+                self.columns = next(reader)
+            except StopIteration:
+                return False
+            
+            for col in self.columns:
+                self.data[col] = []
+            
+            for row in reader:
+                if len(row) != len(self.columns):
+                    continue
+                self._parse_row(row)
+                self.row_count += 1
+            
+            self.total_rows = self.row_count
+        
+        return True
+    
+    def _load_chunk(self, start: int, count: int) -> bool:
+        """
+        加载指定范围的数据块
+        
+        Args:
+            start: 起始行号
+            count: 加载行数
+            
+        Returns:
+            bool: 是否成功加载
+        """
+        encoding = self._encoding or 'utf-8-sig'
+        
+        with open(self._file_path, 'r', newline='', encoding=encoding) as f:
+            reader = csv.reader(f)
+            
+            try:
+                if not self.columns:
                     self.columns = next(reader)
-                    
                     for col in self.columns:
                         self.data[col] = []
-                    
-                    for row in reader:
-                        if len(row) != len(self.columns):
-                            continue
-                        
-                        for i, value in enumerate(row):
-                            col_name = self.columns[i]
-                            try:
-                                if value == '' or value.strip() == '':
-                                    self.data[col_name].append(None)
-                                else:
-                                    self.data[col_name].append(float(value))
-                            except ValueError:
-                                self.data[col_name].append(value)
-                        
-                        self.row_count += 1
-                
-                return True
-                
-            except Exception:
+                else:
+                    next(reader)
+            except StopIteration:
                 return False
+            
+            skip_count = start
+            for _ in range(skip_count):
+                try:
+                    next(reader)
+                except StopIteration:
+                    break
+            
+            loaded = 0
+            for row in reader:
+                if loaded >= count:
+                    self._has_more_data = True
+                    break
+                
+                if len(row) != len(self.columns):
+                    continue
+                
+                self._parse_row(row)
+                self.row_count += 1
+                loaded += 1
+            else:
+                self._has_more_data = False
+            
+            if start == 0:
+                self._count_total_rows()
+        
+        return loaded > 0
+    
+    def _count_total_rows(self):
+        """计算文件总行数"""
+        try:
+            with open(self._file_path, 'r', newline='', encoding=self._encoding) as f:
+                self.total_rows = sum(1 for _ in f) - 1
         except Exception:
+            self.total_rows = self.row_count
+    
+    def _parse_row(self, row: List[str]):
+        """
+        解析单行数据
+        
+        Args:
+            row: CSV行数据
+        """
+        for i, value in enumerate(row):
+            if i >= len(self.columns):
+                break
+            col_name = self.columns[i]
+            parsed_value = self._infer_value_type(value)
+            self.data[col_name].append(parsed_value)
+    
+    def _infer_value_type(self, value: str):
+        """
+        快速推断值的类型（使用正则预检优化）
+        
+        Args:
+            value: 字符串值
+            
+        Returns:
+            转换后的值
+        """
+        if not value or not value.strip():
+            return None
+        
+        stripped = value.strip()
+        
+        if self._NUMERIC_PATTERN.match(stripped):
+            try:
+                if '.' in stripped or 'e' in stripped.lower():
+                    return float(stripped)
+                else:
+                    return int(stripped)
+            except ValueError:
+                return stripped
+        
+        return stripped
+    
+    def load_more(self) -> bool:
+        """
+        加载下一块数据（仅分块模式有效）
+        
+        Returns:
+            bool: 是否成功加载更多数据
+        """
+        if self._chunk_size is None or not self._has_more_data:
             return False
+        
+        start = self._loaded_chunks * self._chunk_size + self.row_count
+        result = self._load_chunk(start, self._chunk_size)
+        
+        if result:
+            self._loaded_chunks += 1
+        
+        return result
+    
+    def has_more_data(self) -> bool:
+        """
+        检查是否还有更多数据可加载
+        
+        Returns:
+            bool: 是否还有更多数据
+        """
+        return self._has_more_data
+    
+    def get_load_progress(self) -> Tuple[int, int]:
+        """
+        获取加载进度
+        
+        Returns:
+            Tuple[int, int]: (已加载行数, 总行数)
+        """
+        return (self.row_count, self.total_rows)
     
     def get_numeric_columns(self) -> List[str]:
         """
@@ -153,8 +314,103 @@ class CSVDataLoader:
                 return col
         return None
     
+    def get_column_data(self, column: str) -> List:
+        """
+        获取指定列的数据
+        
+        Args:
+            column: 列名
+            
+        Returns:
+            List: 该列的数据列表
+        """
+        return self.data.get(column, [])
+    
+    def get_statistics(self, column: str) -> Dict:
+        """
+        获取指定列的统计信息
+        
+        Args:
+            column: 列名
+            
+        Returns:
+            Dict: 统计信息字典
+        """
+        if column not in self.data:
+            return {}
+        
+        values = [v for v in self.data[column] if v is not None and isinstance(v, (int, float))]
+        
+        if not values:
+            return {
+                'count': 0,
+                'null_count': len(self.data[column]),
+                'type': 'non-numeric'
+            }
+        
+        return {
+            'min': min(values),
+            'max': max(values),
+            'mean': sum(values) / len(values),
+            'count': len(values),
+            'null_count': len(self.data[column]) - len(values),
+            'type': 'numeric'
+        }
+    
+    def filter_by_time(self, start_time: float, end_time: float) -> 'CSVDataLoader':
+        """
+        按时间范围过滤数据
+        
+        Args:
+            start_time: 起始时间
+            end_time: 结束时间
+            
+        Returns:
+            CSVDataLoader: 包含过滤后数据的新加载器
+        """
+        time_col = self.get_time_column()
+        if not time_col:
+            return self
+        
+        new_loader = CSVDataLoader()
+        new_loader.columns = self.columns.copy()
+        new_loader._encoding = self._encoding
+        
+        for col in self.columns:
+            new_loader.data[col] = []
+        
+        for i, t in enumerate(self.data[time_col]):
+            if t is not None and start_time <= t <= end_time:
+                for col in self.columns:
+                    new_loader.data[col].append(self.data[col][i])
+                new_loader.row_count += 1
+        
+        new_loader.total_rows = new_loader.row_count
+        return new_loader
+    
     def clear(self):
         """清空加载的数据"""
         self.data.clear()
         self.columns.clear()
         self.row_count = 0
+        self.total_rows = 0
+        self._loaded_chunks = 0
+        self._has_more_data = False
+    
+    def get_encoding(self) -> str:
+        """
+        获取当前使用的编码
+        
+        Returns:
+            str: 文件编码
+        """
+        return self._encoding
+    
+    def is_chunked(self) -> bool:
+        """
+        检查是否为分块加载模式
+        
+        Returns:
+            bool: 是否为分块模式
+        """
+        return self._chunk_size is not None
