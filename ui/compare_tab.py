@@ -11,6 +11,7 @@ from tkinter import ttk, messagebox
 from typing import Optional, List, Dict
 
 from .base import BaseTab
+from .multi_select_combo import MultiSelectCombo
 from core.csv_loader import CSVDataLoader, MULTI_SELECT_COLUMNS
 from core.chart_manager import ChartManager
 
@@ -22,10 +23,12 @@ class CompareTab(BaseTab):
     提供多文件数据对比功能
     
     Attributes:
-        compare_file_listbox: 文件列表框
+        file_combo: 多选下拉复选框组件
         compare_column_vars: 数据列选择变量字典
         chart_manager: 图表管理器
     """
+    
+    MAX_FILE_SELECTION = 10
     
     def __init__(self, parent: tk.Widget, app_context: dict):
         """
@@ -35,7 +38,7 @@ class CompareTab(BaseTab):
             parent: 父容器
             app_context: 应用上下文
         """
-        self.compare_file_listbox: Optional[tk.Listbox] = None
+        self.file_combo: Optional[MultiSelectCombo] = None
         self.compare_column_vars: Dict[str, tk.BooleanVar] = {}
         self.chart_manager: Optional[ChartManager] = None
         
@@ -85,15 +88,28 @@ class CompareTab(BaseTab):
         
         ttk.Label(file_frame, text="选择文件:").pack(side=tk.LEFT)
         
-        listbox_frame = ttk.Frame(file_frame)
-        listbox_frame.pack(side=tk.LEFT, padx=5)
-        
-        self.compare_file_listbox = tk.Listbox(listbox_frame, height=4, selectmode=tk.MULTIPLE, width=40)
-        self.compare_file_listbox.pack(side=tk.LEFT)
-        
-        self.compare_file_listbox.bind('<MouseWheel>', self._on_file_list_scroll)
+        self.file_combo = MultiSelectCombo(
+            file_frame,
+            max_selection=self.MAX_FILE_SELECTION,
+            on_selection_change=self._on_file_selection_change,
+            placeholder="请选择CSV文件...",
+            width=40
+        )
+        self.file_combo.pack(side=tk.LEFT, padx=5)
         
         ttk.Button(file_frame, text="刷新文件", command=self._refresh_files).pack(side=tk.LEFT, padx=5)
+    
+    def _on_file_selection_change(self, selected_files: List[str]):
+        """
+        文件选择变化回调
+        
+        Args:
+            selected_files: 已选择的文件列表
+        """
+        if selected_files:
+            self.compare_status_label.config(text=f"已选择 {len(selected_files)} 个文件")
+        else:
+            self.compare_status_label.config(text="请选择文件和数据列进行对比")
     
     def _create_column_section(self, parent: ttk.Frame):
         """创建数据列选择区域"""
@@ -136,17 +152,6 @@ class CompareTab(BaseTab):
         
         ttk.Button(btn_frame, text="重置滚动", command=self._reset_scroll).pack(side=tk.LEFT, padx=10)
     
-    def _on_file_list_scroll(self, event):
-        """文件列表滚动事件处理"""
-        first_visible = self.compare_file_listbox.nearest(0)
-        
-        if event.delta > 0:
-            self.compare_file_listbox.see(max(0, first_visible - 1))
-        else:
-            self.compare_file_listbox.see(first_visible + 1)
-        
-        return "break"
-    
     def _refresh_files(self):
         """刷新文件列表"""
         output_dir = self.app_context.get('output_dir', '')
@@ -154,17 +159,20 @@ class CompareTab(BaseTab):
             messagebox.showwarning("提示", "请先进行数据转换或设置输出目录")
             return
         
-        csv_files = [f for f in os.listdir(output_dir) if f.endswith('.csv')]
+        self.file_combo.set_loading(True)
+        self.app_context['root'].update()
         
-        self.compare_file_listbox.delete(0, tk.END)
-        for f in csv_files:
-            self.compare_file_listbox.insert(tk.END, f)
+        csv_files = [f for f in os.listdir(output_dir) if f.endswith('.csv')]
+        csv_files.sort()
+        
+        self.file_combo.refresh(csv_files)
+        self.file_combo.set_loading(False)
         
         self.compare_status_label.config(text=f"已加载 {len(csv_files)} 个文件")
     
     def _generate_chart(self):
         """生成对比图表"""
-        selected_files = self.compare_file_listbox.curselection()
+        selected_files = self.file_combo.get_selected()
         if not selected_files:
             messagebox.showwarning("提示", "请至少选择一个文件")
             return
@@ -180,7 +188,7 @@ class CompareTab(BaseTab):
         colors = plt.cm.tab10.colors
         color_idx = 0
         
-        file_names = [self.compare_file_listbox.get(i) for i in selected_files]
+        file_names = selected_files
         
         for file_name in file_names:
             output_dir = self.app_context.get('output_dir', '')
