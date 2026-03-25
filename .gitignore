@@ -38,3 +38,6 @@ ENV/
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# 归档文件（旧版本代码）
+archived/
