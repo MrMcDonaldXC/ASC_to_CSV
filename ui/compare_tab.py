@@ -11,7 +11,6 @@ from tkinter import ttk, messagebox
 from typing import Optional, List, Dict
 
 from .base import BaseTab
-from .multi_select_combo import MultiSelectCombo
 from core.csv_loader import CSVDataLoader, MULTI_SELECT_COLUMNS
 from core.chart_manager import ChartManager
 
@@ -23,12 +22,10 @@ class CompareTab(BaseTab):
     提供多文件数据对比功能
     
     Attributes:
-        file_combo: 多选下拉复选框组件
+        compare_file_listbox: 文件列表框
         compare_column_vars: 数据列选择变量字典
         chart_manager: 图表管理器
     """
-    
-    MAX_FILE_SELECTION = 10
     
     def __init__(self, parent: tk.Widget, app_context: dict):
         """
@@ -38,7 +35,7 @@ class CompareTab(BaseTab):
             parent: 父容器
             app_context: 应用上下文
         """
-        self.file_combo: Optional[MultiSelectCombo] = None
+        self.compare_file_listbox: Optional[tk.Listbox] = None
         self.compare_column_vars: Dict[str, tk.BooleanVar] = {}
         self.chart_manager: Optional[ChartManager] = None
         
@@ -50,6 +47,7 @@ class CompareTab(BaseTab):
         self._compare_update_pending: bool = False
         self._last_compare_update: float = 0
         self._debounce_delay: int = 50
+        self._listbox_hover: bool = False
         
         self.compare_zoom_scale: Optional[ttk.Scale] = None
         self.compare_zoom_label: Optional[ttk.Label] = None
@@ -88,28 +86,20 @@ class CompareTab(BaseTab):
         
         ttk.Label(file_frame, text="选择文件:").pack(side=tk.LEFT)
         
-        self.file_combo = MultiSelectCombo(
-            file_frame,
-            max_selection=self.MAX_FILE_SELECTION,
-            on_selection_change=self._on_file_selection_change,
-            placeholder="请选择CSV文件...",
-            width=40
-        )
-        self.file_combo.pack(side=tk.LEFT, padx=5)
+        listbox_frame = ttk.Frame(file_frame)
+        listbox_frame.pack(side=tk.LEFT, padx=5)
+        
+        self.compare_file_listbox = tk.Listbox(listbox_frame, height=4, selectmode=tk.MULTIPLE, width=40)
+        self.compare_file_listbox.pack(side=tk.LEFT)
+        
+        self.compare_file_listbox.bind('<MouseWheel>', self._on_file_list_scroll)
+        self.compare_file_listbox.bind('<Button-4>', self._on_file_list_scroll_linux)
+        self.compare_file_listbox.bind('<Button-5>', self._on_file_list_scroll_linux)
+        
+        self.compare_file_listbox.bind('<Enter>', self._on_listbox_enter)
+        self.compare_file_listbox.bind('<Leave>', self._on_listbox_leave)
         
         ttk.Button(file_frame, text="刷新文件", command=self._refresh_files).pack(side=tk.LEFT, padx=5)
-    
-    def _on_file_selection_change(self, selected_files: List[str]):
-        """
-        文件选择变化回调
-        
-        Args:
-            selected_files: 已选择的文件列表
-        """
-        if selected_files:
-            self.compare_status_label.config(text=f"已选择 {len(selected_files)} 个文件")
-        else:
-            self.compare_status_label.config(text="请选择文件和数据列进行对比")
     
     def _create_column_section(self, parent: ttk.Frame):
         """创建数据列选择区域"""
@@ -152,6 +142,80 @@ class CompareTab(BaseTab):
         
         ttk.Button(btn_frame, text="重置滚动", command=self._reset_scroll).pack(side=tk.LEFT, padx=10)
     
+    def _on_listbox_enter(self, event):
+        """鼠标进入列表框时获取焦点"""
+        self._listbox_hover = True
+        self.compare_file_listbox.focus_set()
+    
+    def _on_listbox_leave(self, event):
+        """鼠标离开列表框"""
+        self._listbox_hover = False
+    
+    def _on_file_list_scroll(self, event):
+        """
+        文件列表滚动事件处理 (Windows/macOS)
+        
+        支持鼠标滚轮在文件列表中进行上下滚动操作，
+        实现与方向键一致的滚动效果。
+        
+        Args:
+            event: 鼠标滚轮事件对象
+            
+        Returns:
+            str: "break" 阻止事件继续传播
+        """
+        if not self.compare_file_listbox:
+            return "break"
+        
+        size = self.compare_file_listbox.size()
+        if size == 0:
+            return "break"
+        
+        first_visible = self.compare_file_listbox.nearest(0)
+        last_visible = self.compare_file_listbox.nearest(self.compare_file_listbox.winfo_height())
+        
+        scroll_amount = 1
+        
+        if event.delta > 0:
+            new_first = max(0, first_visible - scroll_amount)
+            self.compare_file_listbox.see(new_first)
+            self.compare_file_listbox.yview_scroll(-scroll_amount, "units")
+        else:
+            new_first = min(size - 1, first_visible + scroll_amount)
+            self.compare_file_listbox.see(new_first)
+            self.compare_file_listbox.yview_scroll(scroll_amount, "units")
+        
+        return "break"
+    
+    def _on_file_list_scroll_linux(self, event):
+        """
+        文件列表滚动事件处理 (Linux)
+        
+        Linux系统使用Button-4(向上)和Button-5(向下)事件
+        来处理鼠标滚轮操作。
+        
+        Args:
+            event: 鼠标按钮事件对象
+            
+        Returns:
+            str: "break" 阻止事件继续传播
+        """
+        if not self.compare_file_listbox:
+            return "break"
+        
+        size = self.compare_file_listbox.size()
+        if size == 0:
+            return "break"
+        
+        scroll_amount = 1
+        
+        if event.num == 4:
+            self.compare_file_listbox.yview_scroll(-scroll_amount, "units")
+        elif event.num == 5:
+            self.compare_file_listbox.yview_scroll(scroll_amount, "units")
+        
+        return "break"
+    
     def _refresh_files(self):
         """刷新文件列表"""
         output_dir = self.app_context.get('output_dir', '')
@@ -159,20 +223,17 @@ class CompareTab(BaseTab):
             messagebox.showwarning("提示", "请先进行数据转换或设置输出目录")
             return
         
-        self.file_combo.set_loading(True)
-        self.app_context['root'].update()
-        
         csv_files = [f for f in os.listdir(output_dir) if f.endswith('.csv')]
-        csv_files.sort()
         
-        self.file_combo.refresh(csv_files)
-        self.file_combo.set_loading(False)
+        self.compare_file_listbox.delete(0, tk.END)
+        for f in csv_files:
+            self.compare_file_listbox.insert(tk.END, f)
         
         self.compare_status_label.config(text=f"已加载 {len(csv_files)} 个文件")
     
     def _generate_chart(self):
         """生成对比图表"""
-        selected_files = self.file_combo.get_selected()
+        selected_files = self.compare_file_listbox.curselection()
         if not selected_files:
             messagebox.showwarning("提示", "请至少选择一个文件")
             return
@@ -188,7 +249,7 @@ class CompareTab(BaseTab):
         colors = plt.cm.tab10.colors
         color_idx = 0
         
-        file_names = selected_files
+        file_names = [self.compare_file_listbox.get(i) for i in selected_files]
         
         for file_name in file_names:
             output_dir = self.app_context.get('output_dir', '')
