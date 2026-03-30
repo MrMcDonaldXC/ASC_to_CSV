@@ -90,7 +90,7 @@ class ConvertTab(BaseTab, LogMixin):
     def __init__(self, parent: tk.Widget, app_context: dict):
         """
         初始化转换标签页
-        
+
         Args:
             parent: 父容器（通常是ttk.Notebook）
             app_context: 应用上下文字典，包含以下键：
@@ -99,15 +99,17 @@ class ConvertTab(BaseTab, LogMixin):
                 - 'output_dir': 输出目录路径
                 - 'refresh_callback': 刷新回调函数
         """
-        self.convert_btn: Optional[ttk.Button] = None
-        self.log_text: Optional[tk.Text] = None
+        self.asc_listbox: Optional[tk.Listbox] = None
         self.asc_entry: Optional[ttk.Entry] = None
+        self.asc_mode_var: tk.BooleanVar = None
+        self.log_text: Optional[tk.Text] = None
         self.dbc_listbox: Optional[tk.Listbox] = None
         self.output_entry: Optional[ttk.Entry] = None
         self.sample_interval_var: Optional[tk.StringVar] = None
         self.encoding_var: Optional[tk.StringVar] = None
         self.debug_var: Optional[tk.BooleanVar] = None
-        
+        self.convert_btn: Optional[ttk.Button] = None
+
         super().__init__(parent, app_context)
     
     def _create_widgets(self):
@@ -131,44 +133,119 @@ class ConvertTab(BaseTab, LogMixin):
     def _create_file_section(self, parent: ttk.Frame):
         """
         创建文件选择区域
-        
+
         包含：
-        - ASC文件选择
+        - ASC文件选择（支持单文件和多文件模式）
         - DBC文件列表（支持多文件）
         - 输出目录选择
-        
+
         Args:
             parent: 父容器
         """
         file_frame = ttk.LabelFrame(parent, text="文件设置", padding="10")
         file_frame.pack(fill=tk.X, pady=5)
-        
-        # ASC文件选择
-        ttk.Label(file_frame, text="ASC文件:").grid(row=0, column=0, sticky=tk.W, pady=2)
-        self.asc_entry = ttk.Entry(file_frame, width=60)
-        self.asc_entry.grid(row=0, column=1, sticky=tk.EW, padx=5, pady=2)
-        ttk.Button(file_frame, text="浏览...", command=self._browse_asc).grid(row=0, column=2, pady=2)
-        
-        # DBC文件列表
-        ttk.Label(file_frame, text="DBC文件:").grid(row=1, column=0, sticky=tk.W, pady=2)
+
+        self.asc_mode_var = tk.BooleanVar(value=False)
+
+        asc_mode_frame = ttk.Frame(file_frame)
+        asc_mode_frame.grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 5))
+        ttk.Radiobutton(asc_mode_frame, text="单文件模式", variable=self.asc_mode_var,
+                       value=False, command=self._on_asc_mode_changed).pack(side=tk.LEFT)
+        ttk.Radiobutton(asc_mode_frame, text="多文件拼接模式", variable=self.asc_mode_var,
+                       value=True, command=self._on_asc_mode_changed).pack(side=tk.LEFT)
+
+        single_frame = ttk.Frame(file_frame)
+        single_frame.grid(row=1, column=0, columnspan=3, sticky=tk.EW, pady=2)
+        ttk.Label(single_frame, text="ASC文件:").pack(side=tk.LEFT)
+        self.asc_entry = ttk.Entry(single_frame, width=60)
+        self.asc_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        ttk.Button(single_frame, text="浏览...", command=self._browse_asc).pack(side=tk.LEFT)
+
+        multi_frame = ttk.Frame(file_frame)
+        multi_frame.grid(row=2, column=0, columnspan=3, sticky=tk.EW, pady=2)
+        ttk.Label(multi_frame, text="ASC文件列表:").pack(side=tk.LEFT)
+        self.asc_listbox = tk.Listbox(multi_frame, height=4, selectmode=tk.EXTENDED)
+        self.asc_listbox.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+
+        asc_btn_frame = ttk.Frame(multi_frame)
+        asc_btn_frame.pack(side=tk.LEFT, padx=5)
+        ttk.Button(asc_btn_frame, text="添加", command=self._add_asc_files, width=6).pack(pady=1)
+        ttk.Button(asc_btn_frame, text="删除", command=self._remove_asc_files, width=6).pack(pady=1)
+        ttk.Button(asc_btn_frame, text="清空", command=self._clear_asc_files, width=6).pack(pady=1)
+        ttk.Button(asc_btn_frame, text="排序", command=self._sort_asc_files, width=6).pack(pady=1)
+
+        multi_frame.grid_remove()
+
+        self._single_asc_frame = single_frame
+        self._multi_asc_frame = multi_frame
+
+        ttk.Label(file_frame, text="DBC文件:").grid(row=3, column=0, sticky=tk.W, pady=2)
         dbc_frame = ttk.Frame(file_frame)
-        dbc_frame.grid(row=1, column=1, columnspan=2, sticky=tk.EW, pady=2)
-        
+        dbc_frame.grid(row=3, column=1, columnspan=2, sticky=tk.EW, pady=2)
+
         self.dbc_listbox = tk.Listbox(dbc_frame, height=3, selectmode=tk.EXTENDED)
         self.dbc_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
+
         dbc_btn_frame = ttk.Frame(dbc_frame)
         dbc_btn_frame.pack(side=tk.RIGHT, padx=5)
         ttk.Button(dbc_btn_frame, text="添加", command=self._add_dbc, width=6).pack(pady=1)
         ttk.Button(dbc_btn_frame, text="删除", command=self._remove_dbc, width=6).pack(pady=1)
-        
-        # 输出目录选择
-        ttk.Label(file_frame, text="输出目录:").grid(row=2, column=0, sticky=tk.W, pady=2)
-        self.output_entry = ttk.Entry(file_frame, width=60)
-        self.output_entry.grid(row=2, column=1, sticky=tk.EW, padx=5, pady=2)
-        ttk.Button(file_frame, text="浏览...", command=self._browse_output).grid(row=2, column=2, pady=2)
-        
+
+        ttk.Label(file_frame, text="输出目录:").grid(row=4, column=0, sticky=tk.W, pady=2)
+        output_frame = ttk.Frame(file_frame)
+        output_frame.grid(row=4, column=1, columnspan=2, sticky=tk.EW, pady=2)
+        self.output_entry = ttk.Entry(output_frame, width=60)
+        self.output_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        ttk.Button(output_frame, text="浏览...", command=self._browse_output).pack(side=tk.LEFT)
+
         file_frame.columnconfigure(1, weight=1)
+
+    def _on_asc_mode_changed(self):
+        """ASC文件模式切换事件处理"""
+        if self.asc_mode_var.get():
+            self._single_asc_frame.grid_remove()
+            self._multi_asc_frame.grid()
+        else:
+            self._multi_asc_frame.grid_remove()
+            self._single_asc_frame.grid()
+
+    def _add_asc_files(self):
+        """添加ASC文件到列表"""
+        filenames = filedialog.askopenfilenames(
+            title="选择ASC文件（多选）",
+            filetypes=[("ASC文件", "*.asc"), ("所有文件", "*.*")]
+        )
+        for filename in filenames:
+            if filename not in self.asc_listbox.get(0, tk.END):
+                self.asc_listbox.insert(tk.END, filename)
+
+    def _remove_asc_files(self):
+        """删除选中的ASC文件"""
+        selection = self.asc_listbox.curselection()
+        for index in reversed(selection):
+            self.asc_listbox.delete(index)
+
+    def _clear_asc_files(self):
+        """清空ASC文件列表"""
+        self.asc_listbox.delete(0, tk.END)
+
+    def _sort_asc_files(self):
+        """手动排序ASC文件（基于文件名时间戳）"""
+        from asc_file_merger import ASCFileMerger
+        merger = ASCFileMerger()
+
+        files = list(self.asc_listbox.get(0, tk.END))
+        if not files:
+            return
+
+        try:
+            sorted_files = merger.sort_files_by_time(files)
+            self.asc_listbox.delete(0, tk.END)
+            for f in sorted_files:
+                self.asc_listbox.insert(tk.END, f)
+            messagebox.showinfo("排序完成", f"已按时间戳排序 {len(sorted_files)} 个文件")
+        except Exception as e:
+            messagebox.showerror("排序失败", str(e))
     
     def _create_param_section(self, parent: ttk.Frame):
         """
@@ -306,22 +383,33 @@ class ConvertTab(BaseTab, LogMixin):
     def _save_config(self):
         """
         保存配置
-        
+
         将当前的配置保存到config.json文件中。
-        配置包括：ASC文件路径、DBC文件列表、输出目录、采样间隔、编码、调试模式。
-        
+        配置包括：ASC文件路径/列表、DBC文件列表、输出目录、采样间隔、编码、调试模式。
+
         成功时显示提示对话框，失败时显示错误对话框。
         """
+        multi_file_mode = self.asc_mode_var.get()
+
+        if multi_file_mode:
+            asc_files = list(self.asc_listbox.get(0, tk.END))
+            asc_file = ""
+        else:
+            asc_files = []
+            asc_file = self.asc_entry.get()
+
         config_data = {
-            "asc_file": self.asc_entry.get(),
+            "asc_file": asc_file,
+            "asc_files": asc_files,
+            "multi_file_mode": multi_file_mode,
             "dbc_files": list(self.dbc_listbox.get(0, tk.END)),
             "output_dir": self.output_entry.get(),
             "sample_interval": float(self.sample_interval_var.get()),
             "csv_encoding": self.encoding_var.get(),
             "debug": self.debug_var.get()
         }
-        
-        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                    "config.json")
         
         try:
@@ -336,44 +424,51 @@ class ConvertTab(BaseTab, LogMixin):
     def _validate_inputs(self) -> bool:
         """
         验证输入参数
-        
+
         检查以下内容：
-        1. ASC文件是否已选择且存在
+        1. ASC文件是否已选择且存在（单文件或多文件模式）
         2. 是否至少添加了一个DBC文件
         3. 所有DBC文件是否存在
         4. 输出目录是否已选择
         5. 采样间隔是否为有效的正数
-        
+
         Returns:
             bool: 输入是否有效
         """
-        # 检查ASC文件
-        asc_file = self.asc_entry.get().strip()
-        if not asc_file:
-            messagebox.showerror("错误", "请选择ASC文件")
-            return False
-        
-        if not os.path.exists(asc_file):
-            messagebox.showerror("错误", f"ASC文件不存在: {asc_file}")
-            return False
-        
-        # 检查DBC文件
+        if self.asc_mode_var.get():
+            asc_files = list(self.asc_listbox.get(0, tk.END))
+            if not asc_files:
+                messagebox.showerror("错误", "请添加ASC文件")
+                return False
+
+            for asc_file in asc_files:
+                if not os.path.exists(asc_file):
+                    messagebox.showerror("错误", f"ASC文件不存在: {asc_file}")
+                    return False
+        else:
+            asc_file = self.asc_entry.get().strip()
+            if not asc_file:
+                messagebox.showerror("错误", "请选择ASC文件")
+                return False
+
+            if not os.path.exists(asc_file):
+                messagebox.showerror("错误", f"ASC文件不存在: {asc_file}")
+                return False
+
         if self.dbc_listbox.size() == 0:
             messagebox.showerror("错误", "请至少添加一个DBC文件")
             return False
-        
+
         for dbc in self.dbc_listbox.get(0, tk.END):
             if not os.path.exists(dbc):
                 messagebox.showerror("错误", f"DBC文件不存在: {dbc}")
                 return False
-        
-        # 检查输出目录
+
         output_dir = self.output_entry.get().strip()
         if not output_dir:
             messagebox.showerror("错误", "请选择输出目录")
             return False
-        
-        # 检查采样间隔
+
         try:
             sample_interval = float(self.sample_interval_var.get())
             if sample_interval <= 0:
@@ -382,7 +477,7 @@ class ConvertTab(BaseTab, LogMixin):
         except ValueError:
             messagebox.showerror("错误", "采样间隔必须是有效的数字")
             return False
-        
+
         return True
     
     def _start_convert(self):
@@ -409,64 +504,77 @@ class ConvertTab(BaseTab, LogMixin):
     def _do_convert(self):
         """
         执行转换（后台线程）
-        
+
         创建配置对象和转换服务，执行转换流程。
+        支持单文件和多文件两种模式。
         使用 root.after() 在主线程更新UI。
-        
+
         转换完成后：
         - 成功：显示分组统计信息
         - 失败：显示错误信息
-        
+
         Note:
             此方法在后台线程中执行，不应直接操作UI。
             所有UI更新必须通过 root.after() 在主线程执行。
         """
         try:
+            multi_file_mode = self.asc_mode_var.get()
+
+            if multi_file_mode:
+                asc_files = list(self.asc_listbox.get(0, tk.END))
+                asc_file = ""
+            else:
+                asc_files = []
+                asc_file = self.asc_entry.get()
+
             config = Config(
-                asc_file=self.asc_entry.get(),
+                single_asc_file=asc_file,
+                asc_files=asc_files,
+                multi_file_mode=multi_file_mode,
                 dbc_files=list(self.dbc_listbox.get(0, tk.END)),
                 output_dir=self.output_entry.get(),
                 sample_interval=float(self.sample_interval_var.get()),
                 csv_encoding=self.encoding_var.get(),
                 debug=self.debug_var.get()
             )
-            
+
             service = EnhancedConversionService(config)
-            
+
             def progress_callback(progress: float, line_count: int):
-                self.app_context['root'].after(0, 
+                self.app_context['root'].after(0,
                     lambda: self._update_progress_display(progress, line_count))
-            
+
             result = service.convert(
                 progress_callback=progress_callback,
                 log_callback=self._log
             )
-            
+
             if result.success:
                 self.app_context['output_dir'] = result.output_dir
-                self.app_context['root'].after(0, 
+                self.app_context['root'].after(0,
                     lambda: self.app_context.get('refresh_callback', lambda: None)())
-                
-                group_info = "\n".join([f"  {g}: {result.group_statistics.get(g, 0)}个信号" 
+
+                group_info = "\n".join([f"  {g}: {result.group_statistics.get(g, 0)}个信号"
                                        for g in result.discovered_groups])
-                self.app_context['root'].after(0, 
-                    lambda: messagebox.showinfo("成功", 
-                        f"转换完成！\n输出目录: {result.output_dir}\n发现分组: {len(result.discovered_groups)}个\n{group_info}"))
+                mode_str = "多文件拼接" if multi_file_mode else "单文件"
+                self.app_context['root'].after(0,
+                    lambda: messagebox.showinfo("成功",
+                        f"转换完成！({mode_str})\n输出目录: {result.output_dir}\n发现分组: {len(result.discovered_groups)}个\n{group_info}"))
             else:
-                self.app_context['root'].after(0, 
+                self.app_context['root'].after(0,
                     lambda: messagebox.showerror("错误", f"转换失败: {result.error_message}"))
-            
+
         except Exception as e:
             error_msg = f"{type(e).__name__}: {e}"
             self._log(f"转换失败: {error_msg}")
             if self.debug_var.get():
                 self._log(traceback.format_exc())
-            self.app_context['root'].after(0, 
+            self.app_context['root'].after(0,
                 lambda: messagebox.showerror("错误", f"转换失败: {error_msg}"))
-        
+
         finally:
             self.app_context['is_converting'] = False
-            self.app_context['root'].after(0, 
+            self.app_context['root'].after(0,
                 lambda: self.convert_btn.configure(state=tk.NORMAL))
     
     def _update_progress_display(self, progress: float, line_count: int):
@@ -499,15 +607,23 @@ class ConvertTab(BaseTab, LogMixin):
     def load_config(self, config: Config):
         """
         加载配置
-        
+
         从配置对象加载设置到界面控件。
-        
+
         Args:
             config: 配置对象，包含ASC文件、DBC文件、输出目录等设置
         """
         if config:
-            if config.asc_file:
-                self.asc_entry.insert(0, config.asc_file)
+            if hasattr(config, 'multi_file_mode') and config.multi_file_mode:
+                self.asc_mode_var.set(True)
+                self._on_asc_mode_changed()
+                for asc_file in config.asc_files:
+                    self.asc_listbox.insert(tk.END, asc_file)
+            elif config.single_asc_file:
+                self.asc_mode_var.set(False)
+                self._on_asc_mode_changed()
+                self.asc_entry.insert(0, config.single_asc_file)
+
             for dbc in config.dbc_files:
                 self.dbc_listbox.insert(tk.END, dbc)
             if config.output_dir:

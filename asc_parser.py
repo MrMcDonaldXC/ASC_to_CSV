@@ -229,7 +229,51 @@ class ASCParser:
         self._memory_warning_shown = False
         self._line_count = 0
         gc.collect()
-    
+
+    def parse_multiple(self, asc_files: list, message_map: Dict,
+                      progress_callback: Optional[Callable[[float, int], None]] = None) -> bool:
+        """
+        解析多个ASC文件（用于多文件拼接模式）
+
+        Args:
+            asc_files: ASC文件路径列表（已排序）
+            message_map: 消息映射（来自DBCLoader）
+            progress_callback: 进度回调函数，参数为(进度百分比, 已处理行数)
+
+        Returns:
+            bool: 是否成功解析所有文件
+        """
+        if not asc_files:
+            print("错误：ASC文件列表为空")
+            return False
+
+        if len(asc_files) == 1:
+            return self.parse(asc_files[0], message_map, progress_callback)
+
+        total_files = len(asc_files)
+        overall_success = True
+
+        for file_idx, asc_file in enumerate(asc_files):
+            file_name = os.path.basename(asc_file)
+
+            if progress_callback:
+                progress_callback(file_idx / total_files * 100, 0)
+
+            def partial_progress_callback(progress: float, line_count: int):
+                overall_file_progress = (file_idx + progress / 100) / total_files * 100
+                if progress_callback:
+                    progress_callback(overall_file_progress, line_count)
+
+            if not self.parse(asc_file, message_map, partial_progress_callback):
+                print(f"警告：解析文件失败: {asc_file}")
+                overall_success = False
+                continue
+
+        if progress_callback:
+            progress_callback(100.0, self._line_count)
+
+        return overall_success
+
     def __del__(self):
         """析构函数，确保资源释放"""
         if hasattr(self, 'sampled_data'):

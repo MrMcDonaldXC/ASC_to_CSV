@@ -71,22 +71,51 @@ class Config:
     配置类，包含所有可配置参数
     
     Attributes:
-        asc_file: ASC文件路径
+        asc_files: ASC文件路径列表（支持多文件）
+        single_asc_file: 单个ASC文件路径（兼容旧配置）
         dbc_files: DBC文件路径列表
         output_dir: 输出目录
         sample_interval: 采样间隔（秒）
         group_size: 分组大小
         csv_encoding: CSV文件编码
         debug: 是否启用调试模式
+        multi_file_mode: 是否启用多文件拼接模式
     """
     
-    asc_file: str = ""
+    asc_files: List[str] = field(default_factory=list)
+    single_asc_file: str = ""
     dbc_files: List[str] = field(default_factory=list)
     output_dir: str = ""
     sample_interval: float = 0.1
     group_size: int = 5
     csv_encoding: str = "utf-8-sig"
     debug: bool = False
+    multi_file_mode: bool = False
+    
+    def get_primary_asc_file(self) -> str:
+        """
+        获取主要的ASC文件路径
+        
+        如果是多文件模式，返回第一个文件
+        如果是单文件模式，返回single_asc_file
+        
+        Returns:
+            str: ASC文件路径
+        """
+        if self.multi_file_mode and self.asc_files:
+            return self.asc_files[0] if self.asc_files else ""
+        return self.single_asc_file
+    
+    def get_all_asc_files(self) -> List[str]:
+        """
+        获取所有ASC文件路径
+        
+        Returns:
+            List[str]: ASC文件路径列表
+        """
+        if self.multi_file_mode:
+            return self.asc_files
+        return [self.single_asc_file] if self.single_asc_file else []
     
     def validate(self) -> bool:
         """
@@ -95,23 +124,35 @@ class Config:
         Returns:
             bool: 配置是否有效
         """
-        if not self.asc_file:
-            print("错误：ASC文件路径未设置")
-            return False
-        
-        try:
-            self.asc_file = sanitize_path(self.asc_file)
-        except ValueError as e:
-            print(f"错误：ASC文件路径无效 - {e}")
-            return False
-        
-        if not os.path.exists(self.asc_file):
-            print(f"错误：ASC文件不存在 - {self.asc_file}")
-            return False
-        
-        if not os.access(self.asc_file, os.R_OK):
-            print(f"错误：无权限读取ASC文件 - {self.asc_file}")
-            return False
+        if self.multi_file_mode:
+            if not self.asc_files:
+                print("错误：多文件模式下未设置ASC文件列表")
+                return False
+            for asc_file in self.asc_files:
+                if not os.path.exists(asc_file):
+                    print(f"错误：ASC文件不存在 - {asc_file}")
+                    return False
+                if not os.access(asc_file, os.R_OK):
+                    print(f"错误：无权限读取ASC文件 - {asc_file}")
+                    return False
+        else:
+            if not self.single_asc_file:
+                print("错误：ASC文件路径未设置")
+                return False
+            
+            try:
+                self.single_asc_file = sanitize_path(self.single_asc_file)
+            except ValueError as e:
+                print(f"错误：ASC文件路径无效 - {e}")
+                return False
+            
+            if not os.path.exists(self.single_asc_file):
+                print(f"错误：ASC文件不存在 - {self.single_asc_file}")
+                return False
+            
+            if not os.access(self.single_asc_file, os.R_OK):
+                print(f"错误：无权限读取ASC文件 - {self.single_asc_file}")
+                return False
         
         if not self.dbc_files:
             print("错误：DBC文件列表为空")
@@ -241,15 +282,23 @@ def get_config() -> Config:
             return Config()
         
         try:
-            asc_file = resolve_path(config_data.get("asc_file", ""), config_dir)
+            single_asc = resolve_path(config_data.get("asc_file", ""), config_dir)
+            asc_files = [
+                resolve_path(asc, config_dir)
+                for asc in config_data.get("asc_files", [])
+            ]
+            multi_file_mode = config_data.get("multi_file_mode", False)
+            
             dbc_files = [
-                resolve_path(dbc, config_dir) 
+                resolve_path(dbc, config_dir)
                 for dbc in config_data.get("dbc_files", [])
             ]
             output_dir = resolve_path(config_data.get("output_dir", ""), config_dir)
             
             return Config(
-                asc_file=asc_file,
+                single_asc_file=single_asc,
+                asc_files=asc_files,
+                multi_file_mode=multi_file_mode,
                 dbc_files=dbc_files,
                 output_dir=output_dir,
                 sample_interval=float(config_data.get("sample_interval", 0.1)),

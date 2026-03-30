@@ -38,14 +38,17 @@
 """
 
 import gc
+import os
 from typing import Optional, Callable, Dict, List, Any
 from dataclasses import dataclass, field
 
 from config import Config
 from dbc_loader import DBCLoader
 from asc_parser import ASCParser
+from asc_file_merger import ASCFileMerger
 from enhanced_data_processor import EnhancedDataProcessor
 from enhanced_csv_writer import EnhancedCSVWriter
+from multi_asc_converter import MultiASCConverter
 
 
 @dataclass
@@ -193,36 +196,68 @@ class EnhancedConversionService:
             ...         print(f"  {group}: {result.group_statistics[group]} 个信号")
         """
         result = EnhancedConversionResult()
-        
+
         try:
             self._log(log_callback, "=" * 60)
             self._log(log_callback, "开始转换...")
             self._log(log_callback, f"采样间隔: {self.config.sample_interval}秒")
+            self._log(log_callback, f"文件模式: {'多文件拼接' if self.config.multi_file_mode else '单文件'}")
             self._log(log_callback, "分组规则: BatP+数字 或 BatP+1-2个字母")
             self._log(log_callback, "")
-            
-            # 阶段1: 配置验证
-            if not self._validate_config(log_callback):
+
+            if self.config.multi_file_mode:
+                self._log(log_callback, f"ASC文件数量: {len(self.config.asc_files)} 个文件")
+                for f in self.config.asc_files:
+                    self._log(log_callback, f"  - {os.path.basename(f)}")
+                self._log(log_callback, "")
+
+                if not self.config.validate():
+                    result.error_message = "配置验证失败"
+                    return result
+
+                self.config.create_output_dir()
+                result.output_dir = self.config.output_dir
+
+                multi_converter = MultiASCConverter(self.config)
+                multi_result = multi_converter.convert(
+                    progress_callback=progress_callback,
+                    log_callback=self._wrap_log_callback(log_callback)
+                )
+
+                result.success = multi_result.success
+                result.created_files = multi_result.created_files
+                result.discovered_groups = multi_result.discovered_groups
+                result.group_statistics = multi_result.group_statistics
+                result.error_message = multi_result.error_message
+                result.output_dir = multi_result.output_dir
+
+                self._log(log_callback, "")
+                self._log(log_callback, "=" * 60)
+                self._log(log_callback, "转换完成!")
+                self._log(log_callback, f"输出目录: {result.output_dir}")
+                self._log(log_callback, f"发现分组: {len(result.discovered_groups)}个")
+                self._log(log_callback, f"总数据行: {multi_result.total_rows}行")
+                self._log(log_callback, "=" * 60)
+
+                return result
+
+            if not self.config.validate():
                 result.error_message = "配置验证失败"
                 return result
-            
+
             self.config.create_output_dir()
             result.output_dir = self.config.output_dir
-            
-            # 阶段2: DBC加载
+
             if not self._load_dbc(log_callback):
                 result.error_message = "DBC文件加载失败"
                 return result
-            
-            # 阶段3: ASC解析
+
             if not self._parse_asc(progress_callback, log_callback):
                 result.error_message = "ASC文件解析失败"
                 return result
-            
-            # 阶段4: 数据处理
+
             self._process_data(log_callback)
-            
-            # 获取统计数据
+
             statistics = self._get_statistics()
             result.original_count = statistics['original_count']
             result.sampled_count = statistics['sampled_count']
@@ -267,7 +302,7 @@ class EnhancedConversionService:
     def _log(self, callback: Optional[Callable[[str], None]], message: str):
         """
         输出日志消息
-        
+
         Args:
             callback: 日志回调函数，如果为None则输出到控制台
             message: 日志消息
@@ -276,7 +311,26 @@ class EnhancedConversionService:
             callback(message)
         else:
             print(message)
-    
+
+    def _wrap_log_callback(self, log_callback: Optional[Callable[[str], None]]):
+        """
+        包装日志回调函数
+
+        用于将字符串类型的日志消息传递给回调函数。
+
+        Args:
+            log_callback: 日志回调函数
+
+        Returns:
+            包装后的回调函数
+        """
+        def wrapper(message: str):
+            if log_callback:
+                log_callback(message)
+            else:
+                print(message)
+        return wrapper
+
     def _validate_config(self, log_callback: Optional[Callable[[str], None]]) -> bool:
         """
         验证配置
@@ -331,44 +385,118 @@ class EnhancedConversionService:
     ) -> bool:
         """
         解析ASC文件
-        
-        解析ASC格式的CAN日志文件，提取CAN帧数据并解码为信号值。
-        
+
+        支持单文件和多文件两种模式：
+        - 单文件模式：直接解析单个ASC文件
+        - 多文件模式：先排序再依次解析多个ASC文件
+
         Args:
             progress_callback: 进度回调函数
             log_callback: 日志回调函数
-        
+
         Returns:
             bool: 解析是否成功
-        
+
         Side Effects:
             创建 self.asc_parser 实例
         """
+        self.asc_parser = ASCParser(
+            sample_interval=self.config.sample_interval,
+            debug=self.config.debug
+        )
+
+        if self.config.multi_file_mode:
+            return self._parse_multiple_asc(progress_callback, log_callback)
+        else:
+            return self._parse_single_asc(progress_callback, log_callback)
+
+    def _parse_single_asc(
+        self,
+        progress_callback: Optional[Callable[[float, int], None]],
+        log_callback: Optional[Callable[[str], None]]
+    ) -> bool:
+        """
+        解析单个ASC文件（单文件模式）
+
+        Args:
+            progress_callback: 进度回调函数
+            log_callback: 日志回调函数
+
+        Returns:
+            bool: 解析是否成功
+        """
         self._log(log_callback, "正在解析ASC文件...")
         self._log(log_callback, "进度: 0%")
-        
+
         def internal_progress_callback(progress: float, line_count: int):
             if progress_callback:
                 progress_callback(progress, line_count)
             if log_callback and progress % 10 < 1:
                 self._log(log_callback, f"进度: {progress:.1f}% (已处理 {line_count:,} 行)")
-        
-        self.asc_parser = ASCParser(
-            sample_interval=self.config.sample_interval,
-            debug=self.config.debug
-        )
-        
+
         if not self.asc_parser.parse(
-            self.config.asc_file,
+            self.config.single_asc_file,
             self.dbc_loader.message_map,
             internal_progress_callback
         ):
             return False
-        
+
         original_count, sampled_count, signal_count = self.asc_parser.get_statistics()
         self._log(log_callback, f"解析完成：原始数据点数: {original_count}, 采样后时间点数: {sampled_count}, 实际信号数: {signal_count}")
         self._log(log_callback, "")
-        
+
+        return True
+
+    def _parse_multiple_asc(
+        self,
+        progress_callback: Optional[Callable[[float, int], None]],
+        log_callback: Optional[Callable[[str], None]]
+    ) -> bool:
+        """
+        解析多个ASC文件（多文件拼接模式）
+
+        Args:
+            progress_callback: 进度回调函数
+            log_callback: 日志回调函数
+
+        Returns:
+            bool: 解析是否成功
+        """
+        self._log(log_callback, "正在处理多ASC文件...")
+
+        merger = ASCFileMerger()
+
+        def sort_progress_callback(message: str):
+            self._log(log_callback, message)
+
+        sorted_files = merger.sort_files_by_time(self.config.asc_files, sort_progress_callback)
+
+        self._log(log_callback, f"文件排序完成，共 {len(sorted_files)} 个文件")
+        self._log(log_callback, "")
+
+        self._log(log_callback, "正在解析ASC文件...")
+        self._log(log_callback, "进度: 0%")
+
+        def internal_progress_callback(progress: float, line_count: int, current_file: str = ""):
+            if progress_callback:
+                progress_callback(progress, line_count)
+            if log_callback:
+                msg = f"进度: {progress:.1f}% (已处理 {line_count:,} 行)"
+                if current_file:
+                    msg += f" - {current_file}"
+                self._log(log_callback, msg)
+
+        if not self.asc_parser.parse_multiple(
+            sorted_files,
+            self.dbc_loader.message_map,
+            internal_progress_callback
+        ):
+            return False
+
+        original_count, sampled_count, signal_count = self.asc_parser.get_statistics()
+        self._log(log_callback, f"解析完成：原始数据点数: {original_count}, 采样后时间点数: {sampled_count}, 实际信号数: {signal_count}")
+        self._log(log_callback, "")
+
         return True
     
     def _process_data(self, log_callback: Optional[Callable[[str], None]]):
