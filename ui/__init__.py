@@ -8,5 +8,6 @@ from .base import BaseTab
 from .convert_tab import ConvertTab
 from .visualize_tab import VisualizeTab
 from .compare_tab import CompareTab
+from .export_tab import ExportTab
 
-__all__ = ['BaseTab', 'ConvertTab', 'VisualizeTab', 'CompareTab']
+__all__ = ['BaseTab', 'ConvertTab', 'VisualizeTab', 'CompareTab', 'ExportTab']

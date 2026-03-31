@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 
 from config import Config, get_config
 
-from ui import ConvertTab, VisualizeTab, CompareTab
+from ui import ConvertTab, VisualizeTab, CompareTab, ExportTab
 
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
@@ -108,6 +108,9 @@ class MainApplication:
         
         self.compare_tab = CompareTab(self.notebook, self.app_context)
         self.notebook.add(self.compare_tab, text="数据对比")
+
+        self.export_tab = ExportTab(self.notebook, self.app_context)
+        self.notebook.add(self.export_tab, text="数据导出")
     
     def _create_app_context(self) -> dict:
         """
@@ -144,6 +147,7 @@ class MainApplication:
             self.output_dir = output_dir
             self.visualize_tab.refresh_files()
             self.compare_tab.refresh_files()
+            self.export_tab.refresh_files()
     
     def _on_closing(self):
         """窗口关闭事件处理"""
