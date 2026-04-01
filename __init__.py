@@ -10,6 +10,6 @@ __author__ = "Xuancheng Huang"
 from .config import Config
 from .dbc_loader import DBCLoader
 from .asc_parser import ASCParser
-from .data_processor import DataProcessor
-from .csv_writer import CSVWriter
-from .conversion_service import ConversionService, ConversionResult
+from .enhanced_data_processor import EnhancedDataProcessor as DataProcessor
+from .enhanced_csv_writer import EnhancedCSVWriter as CSVWriter
+from .enhanced_conversion_service import EnhancedConversionService as ConversionService, EnhancedConversionResult as ConversionResult
