@@ -56,7 +56,7 @@ class MainApplication:
     """
     
     VERSION = "v1.0.0"
-    TITLE = "系统集成测试数据处理"
+    TITLE = "系统集成测试数据解析"
     MIN_SIZE = (1000, 700)
     DEFAULT_SIZE = (1400, 900)
     

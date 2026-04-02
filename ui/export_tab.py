@@ -32,44 +32,211 @@ class ExportTab(BaseTab, LogMixin):
             parent: 父容器
             app_context: 应用上下文
         """
+        # 创建CSV数据加载器实例，用于加载和解析CSV文件
         self.data_loader = CSVDataLoader()
+        # 当前加载的CSV文件路径
         self.current_file: Optional[str] = None
+        # 可用的数据列名列表（从CSV文件中读取）
         self.available_columns: List[str] = []
+        # 用户选择要导出的数据列名列表
         self.selected_columns: List[str] = []
+        # 经过搜索过滤后的数据列名列表
         self.filtered_columns: List[str] = []
+        # 搜索关键词，用于过滤数据列
         self.search_keyword: str = ""
 
+        # 文件路径输入框，用于显示和选择要导出的CSV文件
         self.file_entry: Optional[ttk.Entry] = None
+        # 左侧列表框，显示可用数据列（待选择）
         self.left_listbox: Optional[tk.Listbox] = None
+        # 右侧列表框，显示已选择的数据列（待导出）
         self.right_listbox: Optional[tk.Listbox] = None
+        # 预览树形视图，用于显示数据预览表格
         self.preview_tree: Optional[ttk.Treeview] = None
+        # 导出文件名输入框
         self.filename_entry: Optional[ttk.Entry] = None
+        # 导出路径输入框
         self.path_entry: Optional[ttk.Entry] = None
+        # CSV编码方式变量，存储用户选择的编码格式
         self.encoding_var: Optional[tk.StringVar] = None
+        # 导出按钮，触发导出操作
         self.export_btn: Optional[ttk.Button] = None
+        # 清除按钮，清除所有选择
         self.clear_btn: Optional[ttk.Button] = None
+        # 预览按钮，显示数据预览
         self.preview_btn: Optional[ttk.Button] = None
+        # 日志文本框，显示操作日志和错误信息
         self.log_text: Optional[tk.Text] = None
+        # 状态标签，显示当前操作状态
         self.status_label: Optional[ttk.Label] = None
+        # 搜索输入框，用于搜索数据列
         self.search_entry: Optional[ttk.Entry] = None
+        # 左侧列表框的选中项索引列表
         self.left_selections: List[int] = []
+        # 右侧列表框的选中项索引列表
         self.right_selections: List[int] = []
 
+        # 调用父类初始化方法，完成基类的初始化
         super().__init__(parent, app_context)
 
     def _create_widgets(self):
-        """创建界面组件"""
+        """创建界面组件
+        
+        构建导出标签页的完整界面布局，采用多层分割窗口结构实现灵活的界面布局和可调整大小的区域。
+        
+        界面布局结构：
+        ┌─────────────────────────────────────────────────────┐
+        │  主框架 (main_frame)                                  │
+        │  ┌───────────────────────────────────────────────┐  │
+        │  │  顶部框架 (top_frame) - 固定高度                │  │
+        │  │  ├─ 文件选择区域 (file_section)                │  │
+        │  │  ├─ 列选择区域 (column_selection_section)      │  │
+        │  │  └─ 导出配置区域 (export_config_section)       │  │
+        │  └───────────────────────────────────────────────┘  │
+        │  ┌───────────────────────────────────────────────┐  │
+        │  │  预览日志框架 (preview_log_frame)             │  │
+        │  │  ├─ 操作按钮区域 (action_frame)               │  │
+        │  │  ├─ 数据预览区域 (preview_inner_frame)        │  │
+        │  │  └─ 日志显示区域 (log_inner_frame)             │  │
+        │  └───────────────────────────────────────────────┘  │
+        └─────────────────────────────────────────────────────┘
+        
+        使用说明：
+            - 该方法在初始化时自动调用
+            - 创建所有必需的界面控件
+            - 设置分割窗口的拖拽约束
+            - 绑定窗口大小调整事件
+        """
+        # 创建主框架（最外层容器），设置5像素的内边距
+        # fill=tk.BOTH 表示框架在水平和垂直方向都填充父容器
+        # expand=True 允许框架在父容器增大时扩展
         main_frame = ttk.Frame(self, padding="5")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        self._create_file_section(main_frame)
-        self._create_column_selection_section(main_frame)
-        self._create_export_config_section(main_frame)
-        self._create_preview_section(main_frame)
-        self._create_action_section(main_frame)
-        self._create_log_section(main_frame)
+        # 创建垂直分割窗口（paned_window），用于分割顶部控制区和底部预览日志区
+        # orient=tk.VERTICAL 表示分割线是水平方向，可以上下拖动调整高度
+        self.paned_window = ttk.PanedWindow(main_frame, orient=tk.VERTICAL)
+        self.paned_window.pack(fill=tk.BOTH, expand=True)
 
+        # 创建顶部框架（top_frame），包含文件选择、列选择和导出配置区域
+        # weight=0 表示该区域使用0权重，在调整大小时保持固定高度
+        # 用户调整窗口大小时，只有weight>0的区域会发生变化
+        top_frame = ttk.Frame(self.paned_window)
+        self.paned_window.add(top_frame, weight=0)
+
+        # 创建预览日志框架（preview_log_frame），包含操作按钮、数据预览和日志区域
+        # weight=1 表示该区域使用1权重，会随窗口大小变化而自动调整
+        # 这确保了预览和日志区域能够充分利用可用空间
+        preview_log_frame = ttk.Frame(self.paned_window)
+        self.paned_window.add(preview_log_frame, weight=1)
+
+        # 创建操作按钮框架（action_frame），放置导出、清除、预览等按钮
+        # fill=tk.X 表示只在水平方向填充
+        # pady=(0, 5) 设置垂直内边距：上方0像素，下方5像素
+        self.action_frame = ttk.Frame(preview_log_frame)
+        self.action_frame.pack(fill=tk.X, pady=(0, 5))
+
+        # 创建预览区域的垂直分割窗口（preview_paned）
+        # 用于在数据预览和日志区域之间提供可调整的分隔
+        self.preview_paned = ttk.PanedWindow(preview_log_frame, orient=tk.VERTICAL)
+        self.preview_paned.pack(fill=tk.BOTH, expand=True)
+
+        # 创建预览内部框架（preview_inner_frame），用于显示数据预览表格
+        # weight=1 表示预览区域会随分割窗口调整大小而变化
+        self.preview_inner_frame = ttk.Frame(self.preview_paned)
+        self.preview_paned.add(self.preview_inner_frame, weight=1)
+
+        # 创建日志内部框架（log_inner_frame），用于显示操作日志
+        # weight=0 表示日志区域保持固定最小高度
+        self.log_inner_frame = ttk.Frame(self.preview_paned)
+        self.preview_paned.add(self.log_inner_frame, weight=0)
+
+        # 创建各个功能区域的界面控件
+        # 每个区域都有独立的创建方法，便于维护和扩展
+        self._create_file_section(top_frame)               # 文件选择区域：输入框、浏览按钮
+        self._create_column_selection_section(top_frame)  # 列选择区域：左右列表框、移动按钮
+        self._create_export_config_section(top_frame)     # 导出配置：文件名、路径、编码选项
+        self._create_action_section(self.action_frame)     # 操作按钮：导出、清除、预览、重置
+        self._create_preview_section(self.preview_inner_frame)  # 数据预览：树形视图显示表格
+        self._create_log_section(self.log_inner_frame)    # 日志显示：文本框显示操作记录
+
+        # 绑定窗口大小调整事件，实现响应式布局
+        # 当用户调整窗口大小时，自动重新计算各区域的尺寸
         self._bind_resize_event(main_frame)
+        
+        # 设置分割线拖拽约束（sash constraint）
+        # 防止用户在拖拽分割线时将某个区域调整得过小
+        # 确保预览和日志区域始终保持可用的最小尺寸
+        self._setup_sash_constraint()
+
+    def _setup_sash_constraint(self):
+        """设置分割线拖拽约束"""
+        self.preview_min_lines = 6
+        self.log_min_lines = 3
+        self.line_height_approx = 20
+
+        self.preview_paned.bind("<B1-Motion>", self._on_sash_drag)
+        self.preview_paned.bind("<ButtonRelease-1>", self._on_sash_release)
+
+    def _on_sash_drag(self, event):
+        """分割线拖拽时的约束处理"""
+        self._constrain_sash_position()
+
+    def _on_sash_release(self, event):
+        """分割线释放时的约束处理"""
+        self._constrain_sash_position()
+        self._save_sash_position()
+
+    def _constrain_sash_position(self):
+        """约束分割线位置确保最小高度"""
+        if not hasattr(self, 'preview_paned') or not self.preview_paned:
+            return
+
+        try:
+            sash_pos = self.preview_paned.sashpos(0)
+            preview_min = self.preview_min_lines * self.line_height_approx
+            log_min = self.log_min_lines * self.line_height_approx + 80
+
+            total_height = self.preview_paned.winfo_height()
+            if total_height <= 1:
+                total_height = 300
+
+            max_sash_pos = total_height - log_min
+            min_sash_pos = preview_min
+
+            if sash_pos < min_sash_pos:
+                self.preview_paned.sashpos(0, min_sash_pos)
+            elif sash_pos > max_sash_pos:
+                self.preview_paned.sashpos(0, max_sash_pos)
+        except Exception:
+            pass
+
+    def _save_sash_position(self):
+        """保存分割线位置"""
+        if not hasattr(self, 'preview_paned'):
+            return
+        try:
+            sash_pos = self.preview_paned.sashpos(0)
+            total_height = self.preview_paned.winfo_height()
+            if total_height > 1:
+                self._saved_sash_ratio = sash_pos / total_height
+        except Exception:
+            pass
+
+    def _restore_sash_position(self):
+        """恢复保存的分割线位置"""
+        if not hasattr(self, 'preview_paned') or not hasattr(self, '_saved_sash_ratio'):
+            return
+        try:
+            total_height = self.preview_paned.winfo_height()
+            if total_height > 1:
+                sash_pos = int(total_height * self._saved_sash_ratio)
+                preview_min = self.preview_min_lines * self.line_height_approx
+                log_min = self.log_min_lines * self.line_height_approx + 80
+                sash_pos = max(preview_min, min(sash_pos, total_height - log_min))
+                self.preview_paned.sashpos(0, sash_pos)
+        except Exception:
+            pass
 
     def _bind_resize_event(self, main_frame: tk.Frame):
         """绑定窗口大小变化事件用于响应式调整"""
@@ -78,10 +245,35 @@ class ExportTab(BaseTab, LogMixin):
     def _adjust_layout(self, main_frame: tk.Frame):
         """根据窗口大小动态调整布局"""
         window_height = self.winfo_height()
+        screen_height = self.winfo_screenheight()
+        screen_width = self.winfo_screenwidth()
+
+        line_height_px = 18
+        target_height_px = screen_height * 0.25
+        calculated_lines = max(4, min(12, int(target_height_px / line_height_px)))
+
         if window_height < 500:
             self._set_compact_mode(True)
+            self._adjust_column_list_height(4)
         else:
             self._set_compact_mode(False)
+            self._adjust_column_list_height(calculated_lines)
+
+        if hasattr(self, 'preview_paned'):
+            self._restore_sash_position()
+            self._constrain_sash_position()
+
+    def _adjust_column_list_height(self, height: int):
+        """动态调整列选择列表的高度"""
+        if not hasattr(self, 'left_listbox') or not self.left_listbox:
+            return
+        min_height = 11
+        height = max(height, min_height)
+        if self.left_listbox.cget('height') == height:
+            return
+
+        self.left_listbox.configure(height=height)
+        self.right_listbox.configure(height=height)
 
     def _set_compact_mode(self, compact: bool):
         """设置紧凑模式以适应小屏幕"""
@@ -135,7 +327,7 @@ class ExportTab(BaseTab, LogMixin):
         left_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.left_listbox = tk.Listbox(left_frame, selectmode=tk.EXTENDED,
                                        yscrollcommand=left_scroll.set,
-                                       height=5, exportselection=False)
+                                       height=11, exportselection=False)
         self.left_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.left_listbox.bind("<Double-Button-1>", lambda e: self._add_selected_column())
         self.left_listbox.bind("<<ListboxSelect>>", self._on_left_select)
@@ -161,15 +353,18 @@ class ExportTab(BaseTab, LogMixin):
         right_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.right_listbox = tk.Listbox(right_frame, selectmode=tk.EXTENDED,
                                          yscrollcommand=right_scroll.set,
-                                         height=5, exportselection=False)
+                                         height=11, exportselection=False)
         self.right_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.right_listbox.bind("<Double-Button-1>", lambda e: self._remove_selected_column())
         self.right_listbox.bind("<<ListboxSelect>>", self._on_right_select)
         right_scroll.config(command=self.right_listbox.yview)
 
-        self.status_label = ttk.Label(column_frame, text="请先加载CSV文件",
+        self.status_label = ttk.Label(list_container, text="请先加载CSV文件",
                                        foreground="blue")
-        self.status_label.pack(pady=5)
+        self.status_label.pack(pady=5, side=tk.BOTTOM)
+
+        separator = ttk.Separator(column_frame, orient=tk.HORIZONTAL)
+        separator.pack(fill=tk.X, pady=(5, 0))
 
     def _create_export_config_section(self, parent: ttk.Frame):
         """创建导出配置区域"""
@@ -202,7 +397,7 @@ class ExportTab(BaseTab, LogMixin):
     def _create_preview_section(self, parent: ttk.Frame):
         """创建数据预览区域"""
         preview_frame = ttk.LabelFrame(parent, text="数据预览（前10行）", padding="5")
-        preview_frame.pack(fill=tk.X, pady=(0, 5))
+        preview_frame.pack(fill=tk.BOTH, expand=True)
 
         tree_frame = ttk.Frame(preview_frame)
         tree_frame.pack(fill=tk.BOTH, expand=True)
@@ -215,7 +410,7 @@ class ExportTab(BaseTab, LogMixin):
         self.preview_tree = ttk.Treeview(tree_frame,
                                           yscrollcommand=scroll_y.set,
                                           xscrollcommand=scroll_x.set,
-                                          show="headings", height=5)
+                                          show="headings", height=6)
         self.preview_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll_y.config(command=self._preview_tree_yview)
         scroll_x.config(command=self._preview_tree_xview)
@@ -257,12 +452,12 @@ class ExportTab(BaseTab, LogMixin):
     def _create_log_section(self, parent: ttk.Frame):
         """创建日志区域"""
         log_frame = ttk.LabelFrame(parent, text="操作日志", padding="5")
-        log_frame.pack(fill=tk.X, pady=(0, 5))
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
 
         self.log_text = tk.Text(log_frame, height=3, state=tk.DISABLED, wrap=tk.WORD)
         scrollbar = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
-        self.log_text.pack(side=tk.LEFT, fill=tk.X, expand=False)
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
     def _browse_file(self):
