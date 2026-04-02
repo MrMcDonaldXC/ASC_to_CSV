@@ -13,7 +13,7 @@ ASC to CSV 转换与可视化工具 - 模块化版本
 使用方法:
     python main_app.py
 
-版本: v1.0.0
+版本: v1.1.0
 """
 
 import os
@@ -55,7 +55,7 @@ class MainApplication:
         >>> root.mainloop()
     """
     
-    VERSION = "v1.0.0"
+    VERSION = "v1.1.0"
     TITLE = "系统集成测试数据解析"
     MIN_SIZE = (1000, 700)
     DEFAULT_SIZE = (1400, 900)
