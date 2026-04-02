@@ -1,0 +1,15 @@
+# 设置仓库默认行为：不转换换行符
+* text=auto
+
+# 强制所有文本文件使用 LF 换行符
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.bat text eol=lf
+*.sh text eol=lf
+
+# 告诉 Git 这些文件是文本，不进行转换
+*.py diff=python
