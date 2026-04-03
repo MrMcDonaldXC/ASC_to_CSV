@@ -6,8 +6,8 @@
 
 import argparse
 from config import Config, get_default_config
-from enhanced_conversion_service import EnhancedConversionService, EnhancedConversionResult
-from group_extractor import ExtractionStrategy
+from services.conversion_service import ConversionService as EnhancedConversionService, ConversionResult as EnhancedConversionResult
+from core.group_extractor import ExtractionStrategy
 
 
 class EnhancedASCToCSVConverter:

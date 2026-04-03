@@ -1,4 +1,4 @@
-# asc_to_csv/csv_merger.py
+# asc_to_csv/services/csv_merger.py
 """
 CSV文件拼接模块
 
@@ -11,7 +11,7 @@ CSV文件拼接模块
     - 确保整体CSV文件格式正确
 
 使用示例：
-    >>> from csv_merger import CSVFileMerger
+    >>> from services.csv_merger import CSVFileMerger
     >>> merger = CSVFileMerger()
     >>> result = merger.merge_csv_files(['file2.csv', 'file1.csv'], 'output.csv')
     >>> print(f"成功: {result.success}, 行数: {result.total_rows}")

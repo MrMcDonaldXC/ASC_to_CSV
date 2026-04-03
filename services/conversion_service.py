@@ -1,4 +1,4 @@
-# asc_to_csv/enhanced_conversion_service.py
+# asc_to_csv/services/conversion_service.py
 """
 转换服务模块
 
@@ -20,17 +20,17 @@
 
 使用示例：
     >>> from config import Config
-    >>> from enhanced_conversion_service import EnhancedConversionService
-    >>> 
+    >>> from services.conversion_service import ConversionService
+    >>>
     >>> config = Config(
     ...     asc_file='input.asc',
     ...     dbc_files=['data.dbc'],
     ...     output_dir='output'
     ... )
-    >>> 
-    >>> service = EnhancedConversionService(config)
+    >>>
+    >>> service = ConversionService(config)
     >>> result = service.convert()
-    >>> 
+    >>>
     >>> if result.success:
     ...     print(f"转换成功，创建了 {len(result.created_files)} 个文件")
     ... else:
@@ -43,21 +43,21 @@ from typing import Optional, Callable, Dict, List, Any
 from dataclasses import dataclass, field
 
 from config import Config
-from dbc_loader import DBCLoader
-from asc_parser import ASCParser
-from asc_file_merger import ASCFileMerger
-from enhanced_data_processor import EnhancedDataProcessor
-from enhanced_csv_writer import EnhancedCSVWriter
-from multi_asc_converter import MultiASCConverter
+from core.dbc_loader import DBCLoader
+from core.asc_parser import ASCParser
+from services.asc_merger import ASCFileMerger
+from core.data_processor import DataProcessor
+from core.csv_writer import CSVWriter
+from services.multi_converter import MultiASCConverter
 
 
 @dataclass
-class EnhancedConversionResult:
+class ConversionResult:
     """
     转换结果数据类
-    
+
     封装转换过程的完整结果信息，包括成功状态、统计数据、文件列表和错误信息。
-    
+
     Attributes:
         success (bool): 转换是否成功
         original_count (int): 原始数据点数（解析前的数据点总数）
@@ -69,9 +69,9 @@ class EnhancedConversionResult:
         error_message (str): 错误信息（仅在失败时有值）
         group_statistics (Dict[str, int]): 各分组的信号数量统计
         discovered_groups (List[str]): 发现的所有分组名称（排序后）
-    
+
     Examples:
-        >>> result = EnhancedConversionResult()
+        >>> result = ConversionResult()
         >>> result.success = True
         >>> result.created_files = ['output/BATP1.csv', 'output/Others.csv']
         >>> print(f"创建了 {len(result.created_files)} 个文件")
@@ -88,25 +88,25 @@ class EnhancedConversionResult:
     discovered_groups: List[str] = field(default_factory=list)
 
 
-class EnhancedConversionService:
+class ConversionService:
     """
     转换服务类
-    
+
     作为ASC到CSV转换流程的核心协调器，负责组织和管理各个处理模块的执行顺序，
     处理错误情况，并提供进度和日志回调接口。
-    
+
     Attributes:
         config (Config): 配置对象
         dbc_loader (Optional[DBCLoader]): DBC文件加载器
         asc_parser (Optional[ASCParser]): ASC文件解析器
-        data_processor (Optional[EnhancedDataProcessor]): 数据处理器
-        csv_writer (Optional[EnhancedCSVWriter]): CSV写入器
-    
+        data_processor (Optional[DataProcessor]): 数据处理器
+        csv_writer (Optional[CSVWriter]): CSV写入器
+
     分组规则：
         - BatP + 数字：BATP1, BATP10, BATP28 等
         - BatP + 1-2个字母：BATPS, BATPQ, BATPL, BATPR 等
         - 不符合规则的归入 Others
-    
+
     转换流程：
         1. 配置验证 → 确保输入文件存在、输出目录有效
         2. DBC加载 → 加载DBC文件，建立消息ID到消息对象的映射
@@ -114,7 +114,7 @@ class EnhancedConversionService:
         4. 数据处理 → 聚合采样数据，对信号进行分组分类
         5. CSV写入 → 为每个分组创建独立的CSV文件
         6. 资源清理 → 释放内存，确保无内存泄漏
-    
+
     Examples:
         >>> from config import Config
         >>> config = Config(
@@ -123,47 +123,47 @@ class EnhancedConversionService:
         ...     output_dir='output',
         ...     sample_interval=0.1
         ... )
-        >>> 
-        >>> service = EnhancedConversionService(config)
-        >>> 
+        >>>
+        >>> service = ConversionService(config)
+        >>>
         >>> # 使用回调函数
         >>> def log_handler(message):
         ...     print(message)
-        >>> 
+        >>>
         >>> def progress_handler(progress, line_count):
         ...     print(f"进度: {progress:.1f}%")
-        >>> 
+        >>>
         >>> result = service.convert(
         ...     progress_callback=progress_handler,
         ...     log_callback=log_handler
         ... )
     """
-    
+
     def __init__(self, config: Config):
         """
         初始化转换服务
-        
+
         Args:
             config: 配置对象，包含ASC文件路径、DBC文件列表、输出目录等配置
         """
         self.config = config
         self.dbc_loader: Optional[DBCLoader] = None
         self.asc_parser: Optional[ASCParser] = None
-        self.data_processor: Optional[EnhancedDataProcessor] = None
-        self.csv_writer: Optional[EnhancedCSVWriter] = None
-    
+        self.data_processor: Optional[DataProcessor] = None
+        self.csv_writer: Optional[CSVWriter] = None
+
     def convert(
         self,
         progress_callback: Optional[Callable[[float, int], None]] = None,
         log_callback: Optional[Callable[[str], None]] = None,
         overwrite: bool = False
-    ) -> EnhancedConversionResult:
+    ) -> ConversionResult:
         """
         执行完整的转换流程
-        
+
         按照预定义的流程执行转换，包括配置验证、DBC加载、ASC解析、
         数据处理和CSV写入。每个阶段都有详细的日志输出。
-        
+
         Args:
             progress_callback: 进度回调函数
                 - 参数1 (float): 进度百分比 (0.0 - 100.0)
@@ -175,27 +175,27 @@ class EnhancedConversionService:
             overwrite: 是否覆盖已存在的文件
                 - False (默认): 跳过已存在的文件
                 - True: 覆盖已存在的文件
-        
+
         Returns:
-            EnhancedConversionResult: 转换结果对象
+            ConversionResult: 转换结果对象
                 - success: 转换是否成功
                 - created_files: 创建的文件列表
                 - discovered_groups: 发现的分组列表
                 - group_statistics: 分组统计信息
                 - error_message: 错误信息（仅在失败时）
-        
+
         Raises:
             不直接抛出异常，所有异常都会被捕获并记录到 error_message
-        
+
         Examples:
-            >>> service = EnhancedConversionService(config)
+            >>> service = ConversionService(config)
             >>> result = service.convert()
             >>> if result.success:
             ...     print(f"成功创建 {len(result.created_files)} 个文件")
             ...     for group in result.discovered_groups:
             ...         print(f"  {group}: {result.group_statistics[group]} 个信号")
         """
-        result = EnhancedConversionResult()
+        result = ConversionResult()
 
         try:
             self._log(log_callback, "=" * 60)
@@ -262,43 +262,39 @@ class EnhancedConversionService:
             result.original_count = statistics['original_count']
             result.sampled_count = statistics['sampled_count']
             result.signal_count = statistics['signal_count']
-            
-            # 阶段5: CSV写入
+
             write_result = self._write_csv(log_callback, overwrite)
             result.created_files = write_result.get('created_files', [])
             result.skipped_files = write_result.get('skipped_files', [])
             result.success = True
-            
-            # 获取分组信息
+
             result.discovered_groups = self.data_processor.sorted_groups
             result.group_statistics = self.data_processor.get_group_statistics()
-            
-            # 输出完成信息
+
             self._log(log_callback, "")
             self._log(log_callback, "=" * 60)
             self._log(log_callback, "转换完成！")
             self._log(log_callback, f"输出目录: {self.config.output_dir}")
             self._log(log_callback, f"发现分组: {len(result.discovered_groups)}个")
-            
-            # 显示分组详情
+
             for group_name in result.discovered_groups:
                 count = result.group_statistics.get(group_name, 0)
                 self._log(log_callback, f"  {group_name}: {count}个信号")
-            
+
             self._log(log_callback, f"创建文件: {len(result.created_files)}个")
             if result.skipped_files:
                 self._log(log_callback, f"跳过文件: {len(result.skipped_files)}个（已存在）")
             self._log(log_callback, "=" * 60)
-            
+
         except Exception as e:
             result.error_message = f"{type(e).__name__}: {e}"
             self._log(log_callback, f"转换失败: {result.error_message}")
-            
+
         finally:
             self._cleanup()
-        
+
         return result
-    
+
     def _log(self, callback: Optional[Callable[[str], None]], message: str):
         """
         输出日志消息
@@ -334,15 +330,15 @@ class EnhancedConversionService:
     def _validate_config(self, log_callback: Optional[Callable[[str], None]]) -> bool:
         """
         验证配置
-        
+
         检查配置的有效性，包括：
         - ASC文件是否存在
         - DBC文件是否存在
         - 输出目录是否有效
-        
+
         Args:
             log_callback: 日志回调函数
-        
+
         Returns:
             bool: 配置是否有效
         """
@@ -350,34 +346,34 @@ class EnhancedConversionService:
             self._log(log_callback, "配置验证失败")
             return False
         return True
-    
+
     def _load_dbc(self, log_callback: Optional[Callable[[str], None]]) -> bool:
         """
         加载DBC文件
-        
+
         加载所有配置的DBC文件，建立消息和信号的映射关系。
-        
+
         Args:
             log_callback: 日志回调函数
-        
+
         Returns:
             bool: 加载是否成功
-        
+
         Side Effects:
             创建 self.dbc_loader 实例
         """
         self._log(log_callback, "正在加载DBC文件...")
-        
+
         self.dbc_loader = DBCLoader()
         if not self.dbc_loader.load(self.config.dbc_files):
             return False
-        
+
         self._log(log_callback, f"总消息定义数: {self.dbc_loader.get_message_count()}")
         self._log(log_callback, f"总信号定义数: {self.dbc_loader.get_signal_count()}")
         self._log(log_callback, "")
-        
+
         return True
-    
+
     def _parse_asc(
         self,
         progress_callback: Optional[Callable[[float, int], None]],
@@ -498,34 +494,34 @@ class EnhancedConversionService:
         self._log(log_callback, "")
 
         return True
-    
+
     def _process_data(self, log_callback: Optional[Callable[[str], None]]):
         """
         处理数据
-        
+
         聚合采样数据并对信号进行分组分类。
-        
+
         Args:
             log_callback: 日志回调函数
-        
+
         Side Effects:
             创建 self.data_processor 实例
         """
         self._log(log_callback, "正在处理数据...")
-        
-        self.data_processor = EnhancedDataProcessor()
+
+        self.data_processor = DataProcessor()
         self.data_processor.aggregate(self.asc_parser.sampled_data)
         self.data_processor.classify_signals(self.asc_parser.found_signals)
-        
+
         self._log(log_callback, "分组结果：")
         for group_name, count in self.data_processor.get_group_statistics().items():
             self._log(log_callback, f"  {group_name}: {count}个信号")
         self._log(log_callback, "")
-    
+
     def _get_statistics(self) -> Dict[str, int]:
         """
         获取统计信息
-        
+
         Returns:
             Dict[str, int]: 统计信息字典
                 - original_count: 原始数据点数
@@ -538,18 +534,18 @@ class EnhancedConversionService:
             'sampled_count': sampled_count,
             'signal_count': signal_count
         }
-    
-    def _write_csv(self, log_callback: Optional[Callable[[str], None]], 
+
+    def _write_csv(self, log_callback: Optional[Callable[[str], None]],
                    overwrite: bool) -> Dict[str, Any]:
         """
         写入CSV文件
-        
+
         为每个分组创建独立的CSV文件，并生成汇总文件。
-        
+
         Args:
             log_callback: 日志回调函数
             overwrite: 是否覆盖已存在的文件
-        
+
         Returns:
             Dict[str, Any]: 写入结果
                 - created_files: 创建的文件列表
@@ -557,37 +553,37 @@ class EnhancedConversionService:
                 - total_groups: 总分组数
                 - created_count: 创建文件数
                 - skipped_count: 跳过文件数
-        
+
         Side Effects:
             创建 self.csv_writer 实例
         """
         self._log(log_callback, "正在创建CSV文件...")
-        
-        self.csv_writer = EnhancedCSVWriter(
+
+        self.csv_writer = CSVWriter(
             output_dir=self.config.output_dir,
             encoding=self.config.csv_encoding,
             overwrite=overwrite
         )
-        
+
         write_result = self.csv_writer.write_all_groups(
             classified_signals=self.data_processor.classified_signals,
             sorted_timestamps=self.data_processor.get_sorted_timestamps(),
             aggregated_data=self.data_processor.aggregated_data,
             signal_info=self.dbc_loader.signal_info
         )
-        
+
         self.csv_writer.write_summary_file(
             classified_signals=self.data_processor.classified_signals,
             sorted_timestamps=self.data_processor.get_sorted_timestamps(),
             result_stats=write_result
         )
-        
+
         return write_result
-    
+
     def _cleanup(self):
         """
         清理资源
-        
+
         释放所有模块占用的内存，确保无内存泄漏。
         通常在转换完成后调用。
         """
@@ -596,25 +592,29 @@ class EnhancedConversionService:
         if self.data_processor:
             self.data_processor.clear()
         gc.collect()
-    
+
     def get_group_statistics(self) -> Dict[str, int]:
         """
         获取分组统计信息
-        
+
         Returns:
             Dict[str, int]: 分组名称到信号数量的映射
         """
         if self.data_processor:
             return self.data_processor.get_group_statistics()
         return {}
-    
+
     def get_sorted_groups(self) -> List[str]:
         """
         获取排序后的分组列表
-        
+
         Returns:
             List[str]: 排序后的组名称列表
         """
         if self.data_processor:
             return self.data_processor.sorted_groups
         return []
+
+
+EnhancedConversionService = ConversionService
+EnhancedConversionResult = ConversionResult

@@ -1,4 +1,4 @@
-# asc_to_csv/asc_file_merger.py
+# asc_to_csv/services/asc_merger.py
 """
 ASC文件拼接模块
 
@@ -9,7 +9,7 @@ ASC文件拼接模块
     - 错误检测和报告
 
 使用示例：
-    >>> from asc_file_merger import ASCFileMerger
+    >>> from services.asc_merger import ASCFileMerger
     >>> merger = ASCFileMerger()
     >>> sorted_files = merger.sort_files_by_time(['file2.asc', 'file1.asc'])
     >>> print(sorted_files)  # ['file1.asc', 'file2.asc']

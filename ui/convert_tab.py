@@ -49,7 +49,7 @@ import traceback
 
 from .base import BaseTab, LogMixin
 from config import Config
-from enhanced_conversion_service import EnhancedConversionService
+from services.conversion_service import ConversionService as EnhancedConversionService
 
 
 class ConvertTab(BaseTab, LogMixin):

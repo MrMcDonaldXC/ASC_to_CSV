@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils import extract_batp_group, safe_value, sort_group_key
+from core.utils import extract_batp_group, safe_value, sort_group_key
 
 
 class TestExtractBatpGroup(unittest.TestCase):

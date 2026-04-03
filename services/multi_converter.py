@@ -1,4 +1,4 @@
-# asc_to_csv/multi_asc_converter.py
+# asc_to_csv/services/multi_converter.py
 """
 多ASC文件转换器模块
 
@@ -20,7 +20,7 @@
     - 错误恢复机制
 
 使用示例：
-    >>> from multi_asc_converter import MultiASCConverter
+    >>> from services.multi_converter import MultiASCConverter
     >>> from config import Config
     >>> config = Config(
     ...     asc_files=['file2.asc', 'file1.asc'],
@@ -40,12 +40,12 @@ from dataclasses import dataclass, field
 from collections import defaultdict
 
 from config import Config
-from dbc_loader import DBCLoader
-from asc_parser import ASCParser
-from enhanced_data_processor import EnhancedDataProcessor
-from enhanced_csv_writer import EnhancedCSVWriter
-from asc_file_merger import ASCFileMerger
-from csv_merger import CSVFileMerger
+from core.dbc_loader import DBCLoader
+from core.asc_parser import ASCParser
+from core.data_processor import DataProcessor
+from core.csv_writer import CSVWriter
+from services.asc_merger import ASCFileMerger
+from services.csv_merger import CSVFileMerger
 
 
 @dataclass
@@ -210,14 +210,14 @@ class MultiASCConverter:
         if not parser.parse(asc_file, message_map, progress_callback):
             return False, "ASC解析失败", {}
 
-        processor = EnhancedDataProcessor()
+        processor = DataProcessor()
         processor.aggregate(parser.sampled_data)
         processor.classify_signals(parser.found_signals)
 
         temp_output_dir = os.path.join(self.temp_dir, f"asc_{asc_index}")
         os.makedirs(temp_output_dir, exist_ok=True)
 
-        writer = EnhancedCSVWriter(
+        writer = CSVWriter(
             output_dir=temp_output_dir,
             encoding=self.config.csv_encoding,
             overwrite=True

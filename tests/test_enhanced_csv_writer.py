@@ -13,7 +13,7 @@ import csv
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from enhanced_csv_writer import EnhancedCSVWriter
+from core.csv_writer import EnhancedCSVWriter
 
 
 class TestEnhancedCSVWriterBasic(unittest.TestCase):

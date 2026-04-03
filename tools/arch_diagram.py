@@ -1,3 +1,4 @@
+# asc_to_csv/tools/arch_diagram.py
 # -*- coding: utf-8 -*-
 """
 项目架构图生成脚本
@@ -10,13 +11,14 @@
 - 数据流方向
 
 使用方式:
-    python generate_architecture_diagram.py
+    python tools/arch_diagram.py
 """
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
 import numpy as np
+import os
 
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
@@ -99,7 +101,6 @@ def generate_architecture_diagram():
         'arrow': '#333333',
     }
 
-    # ============ UI Layer ============
     ui_y = 11.0
     ui_height = 1.5
     draw_layer(ax, 0.5, ui_y, 19, ui_height, 'UI Layer (User Interface)', colors['ui'])
@@ -114,13 +115,12 @@ def generate_architecture_diagram():
     for x, label, w in ui_modules:
         draw_module(ax, x, ui_y + 0.2, w, ui_height - 0.4, label, '#D6E8F7', 8)
 
-    # ============ Service Layer ============
     service_y = 8.5
     service_height = 2.0
     draw_layer(ax, 0.5, service_y, 19, service_height, 'Service Layer (Business Logic)', colors['service'])
 
     service_modules = [
-        (1.0, 'EnhancedConversion\nService\n(转换服务)', 3.5),
+        (1.0, 'Conversion\nService\n(转换服务)', 3.5),
         (5.0, 'MultiASC\nConverter\n(多文件转换)', 3.5),
         (9.0, 'CSVWriter\n(CSV写入)', 2.5),
         (12.0, 'DataProcessor\n(数据处理)', 2.5),
@@ -130,7 +130,6 @@ def generate_architecture_diagram():
     for x, label, w in service_modules:
         draw_module(ax, x, service_y + 0.25, w, service_height - 0.5, label, '#C3E6C3', 8)
 
-    # ============ Data Access Layer ============
     data_y = 5.5
     data_height = 2.5
     draw_layer(ax, 0.5, data_y, 19, data_height, 'Data Access Layer (File I/O)', colors['parser'])
@@ -138,15 +137,14 @@ def generate_architecture_diagram():
     data_modules = [
         (1.0, 'ASCParser\n(ASC解析)', 3.0),
         (4.5, 'DBCLoader\n(DBC加载)', 3.0),
-        (8.0, 'ASCFileMerger\n(ASC拼接)', 3.0),
-        (11.5, 'CSVFileMerger\n(CSV拼接)', 3.0),
+        (8.0, 'ASCMerger\n(ASC拼接)', 3.0),
+        (11.5, 'CSVMerger\n(CSV拼接)', 3.0),
         (15.0, 'CSVLoader\n(CSV加载)', 2.5),
     ]
 
     for x, label, w in data_modules:
         draw_module(ax, x, data_y + 0.3, w, data_height - 0.6, label, '#F5C6C0', 8)
 
-    # ============ Core Layer ============
     core_y = 3.0
     core_height = 2.0
     draw_layer(ax, 0.5, core_y, 19, core_height, 'Core Utilities & Configuration', colors['core'])
@@ -155,13 +153,12 @@ def generate_architecture_diagram():
         (1.0, 'Config\n(配置管理)', 2.5),
         (4.0, 'Utils\n(工具函数)', 2.5),
         (7.0, 'ChartManager\n(图表管理)', 2.8),
-        (10.5, 'MainApplication\n(主程序)', 2.8),
+        (10.5, 'MainApp\n(主程序)', 2.8),
     ]
 
     for x, label, w in core_modules:
         draw_module(ax, x, core_y + 0.25, w, core_height - 0.5, label, '#DDD6FE', 8)
 
-    # ============ External Services ============
     ext_y = 0.5
     ext_height = 1.8
     draw_layer(ax, 0.5, ext_y, 19, ext_height, 'External Libraries & Dependencies', colors['external'])
@@ -177,55 +174,49 @@ def generate_architecture_diagram():
     for x, label, w in ext_modules:
         draw_module(ax, x, ext_y + 0.25, w, ext_height - 0.5, label, '#B8E4E8', 8)
 
-    # ============ Arrows / Data Flow ============
-    # UI -> Service
     draw_arrow(ax, (10, ui_y), (10, service_y + service_height))
     ax.text(10.2, (ui_y + service_y + service_height)/2, 'User Input\n& Config',
             fontsize=7, color='#666666', va='center')
 
-    # Service -> Data Access
     draw_arrow(ax, (10, service_y), (10, data_y + data_height))
     ax.text(10.2, (service_y + data_y + data_height)/2, 'Parse Request\n& Data',
             fontsize=7, color='#666666', va='center')
 
-    # Data Access -> Core
     draw_dashed_arrow(ax, (10, data_y), (10, core_y + core_height))
     ax.text(10.2, (data_y + core_y + core_height)/2, 'Config\n& Utils',
             fontsize=7, color='#666666', va='center')
 
-    # Internal service connections
     draw_bidirectional_arrow(ax, (4.5, service_y + 1.0), (7.5, service_y + 1.0), colors['arrow'])
     ax.text(6.0, service_y + 1.3, 'Data', fontsize=7, color='#666666', ha='center')
 
     draw_arrow(ax, (9.0, service_y + 1.0), (12.0, service_y + 1.0), colors['arrow'])
     ax.text(10.5, service_y + 1.3, 'Processed\nData', fontsize=7, color='#666666', ha='center')
 
-    # Data access internal
     draw_bidirectional_arrow(ax, (4.5, data_y + 1.2), (7.5, data_y + 1.2), colors['arrow'])
     draw_bidirectional_arrow(ax, (11.5, data_y + 1.2), (14.5, data_y + 1.2), colors['arrow'])
 
-    # ============ Legend ============
     legend_y = 0.15
     legend_items = [
-        ('→', '单数据流', '#333333'),
-        ('↔', '双向数据流', '#333333'),
-        ('--→', '配置/工具流', '#666666'),
+        ('->', '单数据流', '#333333'),
+        ('<->', '双向数据流', '#333333'),
+        ('-->', '配置/工具流', '#666666'),
     ]
 
     ax.text(16, legend_y, 'Legend:', fontsize=9, fontweight='bold', color='#333333')
     for i, (arrow, label, color) in enumerate(legend_items):
         ax.text(17.2 + i*1.2, legend_y, f'{arrow} {label}', fontsize=7, color=color)
 
-    # ============ Deployment Info ============
     ax.text(0.8, 0.15, 'Deployment: Windows Desktop Application (PyInstaller)',
             fontsize=8, color='#888888', style='italic')
     ax.text(13, 0.15, 'Python 3.8+ | Tkinter | matplotlib',
             fontsize=8, color='#888888', style='italic')
 
     plt.tight_layout()
-    plt.savefig('architecture_diagram.png', dpi=150, bbox_inches='tight',
+    output_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'docs', 'architecture_diagram.png')
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    plt.savefig(output_path, dpi=150, bbox_inches='tight',
                 facecolor='#FAFAFA', edgecolor='none')
-    print("架构图已保存: architecture_diagram.png")
+    print(f"架构图已保存: {output_path}")
 
 
 def generate_detailed_flow_diagram():
@@ -260,7 +251,6 @@ def generate_detailed_flow_diagram():
         ax.annotate('', xy=(x2, y2), xytext=(x1, y1),
                    arrowprops=dict(arrowstyle='->', color=color, lw=2))
 
-    # Single File Mode Flow
     ax.text(4.5, 10.2, 'Single File Mode', ha='center', fontsize=12,
             fontweight='bold', color='#4A90D9')
 
@@ -275,7 +265,6 @@ def generate_detailed_flow_diagram():
     ]):
         draw_arrow_simple(ax, x1, y1, x2, y2)
 
-    # Multi File Mode Flow
     ax.text(13.5, 10.2, 'Multi File Mode', ha='center', fontsize=12,
             fontweight='bold', color='#5B9A5B')
 
@@ -294,16 +283,17 @@ def generate_detailed_flow_diagram():
     ax.text(16, 7.5, 'For each\nASC file', fontsize=8, color='#666666', ha='center')
     ax.text(16, 5.5, 'Merge by\ngroup name', fontsize=8, color='#666666', ha='center')
 
-    # Note
     ax.text(9, 0.8, 'Note: Multi-file mode handles large datasets by processing each file sequentially,\n'
             'sorting by timestamp, and merging results to avoid memory issues.',
             ha='center', fontsize=8, color='#666666', style='italic',
             bbox=dict(boxstyle='round', facecolor='#F0F0F0', alpha=0.8))
 
     plt.tight_layout()
-    plt.savefig('dataflow_diagram.png', dpi=150, bbox_inches='tight',
+    output_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'docs', 'dataflow_diagram.png')
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    plt.savefig(output_path, dpi=150, bbox_inches='tight',
                 facecolor='#FAFAFA', edgecolor='none')
-    print("数据流图已保存: dataflow_diagram.png")
+    print(f"数据流图已保存: {output_path}")
 
 
 if __name__ == '__main__':
