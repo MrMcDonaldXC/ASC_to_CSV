@@ -749,17 +749,20 @@ class ExportTab(BaseTab, LogMixin):
             output_file: 输出文件路径
             encoding: 文件编码
         """
-        with open(output_file, 'w', newline='', encoding=encoding) as f:
-            writer = csv.writer(f)
+        try:
+            with open(output_file, 'w', newline='', encoding=encoding) as f:
+                writer = csv.writer(f)
 
-            writer.writerow(self.selected_columns)
+                writer.writerow(self.selected_columns)
 
-            for row_idx in range(self.data_loader.row_count):
-                row_data = []
-                for col in self.selected_columns:
-                    value = self.data_loader.data[col][row_idx]
-                    row_data.append(value if value is not None else "")
-                writer.writerow(row_data)
+                for row_idx in range(self.data_loader.row_count):
+                    row_data = []
+                    for col in self.selected_columns:
+                        value = self.data_loader.data[col][row_idx]
+                        row_data.append(value if value is not None else "")
+                    writer.writerow(row_data)
+        except Exception as e:
+            raise RuntimeError(f"写入文件失败: {e}")
 
     def _clear_all(self):
         """清空所有选项，重置到初始状态"""

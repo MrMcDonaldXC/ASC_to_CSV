@@ -31,7 +31,7 @@ class VisualizeTab(BaseTab):
     def __init__(self, parent: tk.Widget, app_context: dict):
         """
         初始化可视化标签页
-        
+
         Args:
             parent: 父容器
             app_context: 应用上下文
@@ -40,21 +40,24 @@ class VisualizeTab(BaseTab):
         self.chart_manager: Optional[ChartManager] = None
         self.current_file: Optional[str] = None
         self.current_column: Optional[str] = None
-        
+
         self.zoom_level: float = 1.0
         self.scroll_position: float = 0.0
         self.crosshair_enabled: bool = False
-        
+
         self._all_columns: List[str] = []
         self._search_placeholder: str = "搜索列名..."
-        
+
         self._chart_update_pending: bool = False
         self._last_chart_update: float = 0
         self._debounce_delay: int = 50
-        
+
         self._last_mouse_move_time: float = 0
-        self._mouse_move_throttle: int = 30  # 鼠标移动节流间隔（毫秒）
-        
+        self._mouse_move_throttle: int = 30
+
+        self._max_data_points: int = 100000
+        self._data_warning_shown: bool = False
+
         self.file_combo: Optional[ttk.Combobox] = None
         self.column_combo: Optional[ttk.Combobox] = None
         self.column_search_var: Optional[tk.StringVar] = None
@@ -66,7 +69,7 @@ class VisualizeTab(BaseTab):
         self.crosshair_var: Optional[tk.BooleanVar] = None
         self.status_label: Optional[ttk.Label] = None
         self.coord_label: Optional[ttk.Label] = None
-        
+
         super().__init__(parent, app_context)
     
     def _create_widgets(self):
@@ -133,7 +136,7 @@ class VisualizeTab(BaseTab):
         """创建缩放控制区域"""
         zoom_frame = ttk.Frame(parent)
         zoom_frame.pack(fill=tk.X, pady=5)
-        
+
         ttk.Label(zoom_frame, text="缩放:").pack(side=tk.LEFT)
         self.zoom_scale = ttk.Scale(zoom_frame, from_=0.1, to=5.0, value=1.0,
                                      orient=tk.HORIZONTAL, length=150,
@@ -141,18 +144,21 @@ class VisualizeTab(BaseTab):
         self.zoom_scale.pack(side=tk.LEFT, padx=5)
         self.zoom_label = ttk.Label(zoom_frame, text="100%", width=6)
         self.zoom_label.pack(side=tk.LEFT)
-        
+
         ttk.Button(zoom_frame, text="重置", command=self._reset_zoom).pack(side=tk.LEFT, padx=10)
-        
+
         ttk.Label(zoom_frame, text="水平滚动:").pack(side=tk.LEFT, padx=(20, 0))
         self.scroll_scale = ttk.Scale(zoom_frame, from_=0, to=100, value=0,
                                        orient=tk.HORIZONTAL, length=150,
                                        command=self._on_scroll_changed)
         self.scroll_scale.pack(side=tk.LEFT, padx=5)
-        
+
         self.crosshair_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(zoom_frame, text="显示十字参考线", variable=self.crosshair_var,
                         command=self._toggle_crosshair).pack(side=tk.LEFT, padx=20)
+
+        self.perf_mode_label = ttk.Label(zoom_frame, text="", foreground="orange", width=15)
+        self.perf_mode_label.pack(side=tk.LEFT, padx=5)
     
     def _on_file_selected(self, event):
         """文件选择事件处理"""
@@ -171,23 +177,39 @@ class VisualizeTab(BaseTab):
         """加载CSV文件"""
         self.status_label.config(text=f"正在加载: {os.path.basename(file_path)}...")
         self.app_context['root'].update()
-        
+
         if self.data_loader.load(file_path):
             self.current_file = file_path
-            
+
             numeric_cols = self.data_loader.get_numeric_columns()
             self._all_columns = numeric_cols
-            
+
             self.column_combo['values'] = numeric_cols
             if numeric_cols:
                 self.column_combo.set(numeric_cols[0])
                 self.current_column = numeric_cols[0]
-            
+
             self.column_search_status.config(text=f"共 {len(numeric_cols)} 列")
             self.column_search_var.set(self._search_placeholder)
-            
+
+            time_col = self.data_loader.get_time_column()
+            if time_col:
+                total_points = len(self.data_loader.data.get(time_col, []))
+                if total_points > self._max_data_points:
+                    if not self._data_warning_shown:
+                        self.status_label.config(
+                            text=f"警告: 数据量过大({total_points}点)，已启用性能模式"
+                        )
+                        self._data_warning_shown = True
+                        self.app_context['root'].after(3000, lambda: self.status_label.config(
+                            text=f"已加载: {os.path.basename(file_path)}"
+                        ))
+                else:
+                    self.status_label.config(text=f"已加载: {os.path.basename(file_path)}")
+            else:
+                self.status_label.config(text=f"已加载: {os.path.basename(file_path)}")
+
             self._update_chart()
-            self.status_label.config(text=f"已加载: {os.path.basename(file_path)}")
         else:
             self.status_label.config(text="加载失败")
     
@@ -263,42 +285,51 @@ class VisualizeTab(BaseTab):
         """更新图表"""
         if not self.current_column or not self.data_loader.data:
             return
-        
+
         self.chart_manager.clear()
-        
+
         time_col = self.data_loader.get_time_column()
         if not time_col:
             return
-        
+
         time_data = self.data_loader.data[time_col]
-        
+
         total_points = len(time_data)
+
+        if total_points > self._max_data_points:
+            self.perf_mode_label.config(text=f"性能模式: {total_points}点")
+            self.chart_manager.set_max_render_points(self._max_data_points)
+        else:
+            self.perf_mode_label.config(text="")
+            self.chart_manager.set_max_render_points(total_points)
+
         visible_points = max(1, int(total_points / self.zoom_level))
-        
+        visible_points = min(visible_points, self._max_data_points)
+
         start_idx = int(self.scroll_position * (total_points - visible_points))
         start_idx = max(0, min(start_idx, total_points - visible_points))
         end_idx = min(start_idx + visible_points, total_points)
-        
+
         if self.current_column in self.data_loader.data:
             y_data = self.data_loader.data[self.current_column][start_idx:end_idx]
             x_data = time_data[start_idx:end_idx]
-            
+
             valid_indices = [i for i, v in enumerate(y_data) if v is not None]
-            
+
             if valid_indices:
                 label = self.current_column.split('[')[0] if '[' in self.current_column else self.current_column
                 label = label.split('::')[-1] if '::' in label else label
-                
+
                 self.chart_manager.plot_segments(
                     x_data, y_data, label=label,
                     linewidth=1.5, antialiased=True
                 )
-        
-        self.chart_manager.set_labels(time_col, "数值", 
+
+        self.chart_manager.set_labels(time_col, "数值",
                                        os.path.basename(self.current_file) if self.current_file else "")
         self.chart_manager.add_legend()
         self.chart_manager.add_grid()
-        
+
         self.chart_manager.clear_crosshair()
         self.chart_manager.update()
     
@@ -387,18 +418,32 @@ class VisualizeTab(BaseTab):
             self.chart_manager.draw_idle()
     
     def refresh_files(self):
-        """刷新文件列表"""
+        """刷新文件列表（公共接口）"""
         self._refresh_csv_files()
-    
+
+    def cleanup(self):
+        """清理资源，防止内存泄漏"""
+        if self.chart_manager:
+            self.chart_manager.destroy()
+            self.chart_manager = None
+
+        if self.data_loader:
+            self.data_loader.clear()
+            self.data_loader = None
+
+        self.current_file = None
+        self.current_column = None
+        self._all_columns = []
+
     def _refresh_csv_files(self):
         """刷新CSV文件列表"""
         output_dir = self.app_context.get('output_dir', '')
         if not output_dir or not os.path.exists(output_dir):
             return
-        
+
         csv_files = [f for f in os.listdir(output_dir) if f.endswith('.csv')]
         self.file_combo['values'] = csv_files
-        
+
         if csv_files:
             self.file_combo.set(csv_files[0])
             self._on_file_selected(None)

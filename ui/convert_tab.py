@@ -392,31 +392,46 @@ class ConvertTab(BaseTab, LogMixin):
         multi_file_mode = self.asc_mode_var.get()
 
         if multi_file_mode:
-            asc_files = list(self.asc_listbox.get(0, tk.END))
-            asc_file = ""
+            asc_list_for_save = list(self.asc_listbox.get(0, tk.END))
+            asc_file_for_save = ""
         else:
-            asc_files = []
-            asc_file = self.asc_entry.get()
+            asc_list_for_save = []
+            asc_file_for_save = self.asc_entry.get().strip()
+
+        sample_interval_str = self.sample_interval_var.get().strip()
+        try:
+            sample_interval = float(sample_interval_str) if sample_interval_str else 0.1
+        except ValueError:
+            sample_interval = 0.1
 
         config_data = {
-            "asc_file": asc_file,
-            "asc_files": asc_files,
+            "asc_file": asc_file_for_save,
+            "asc_files": asc_list_for_save,
             "multi_file_mode": multi_file_mode,
             "dbc_files": list(self.dbc_listbox.get(0, tk.END)),
-            "output_dir": self.output_entry.get(),
-            "sample_interval": float(self.sample_interval_var.get()),
+            "output_dir": self.output_entry.get().strip(),
+            "sample_interval": sample_interval,
             "csv_encoding": self.encoding_var.get(),
             "debug": self.debug_var.get()
         }
 
-        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                   "config.json")
-        
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        config_path = os.path.join(project_root, "config.json")
+
         try:
             with open(config_path, 'w', encoding='utf-8') as f:
                 json.dump(config_data, f, indent=4, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+
+            with open(config_path, 'r', encoding='utf-8') as f:
+                verification = json.load(f)
+
+            if verification.get("sample_interval") != config_data["sample_interval"]:
+                raise IOError("配置保存验证失败：数据不一致")
+
             self._log(f"配置已保存到: {config_path}")
-            messagebox.showinfo("成功", "配置保存成功！")
+            messagebox.showinfo("成功", f"配置保存成功！\n\n文件路径: {config_path}")
         except Exception as e:
             self._log(f"保存配置失败: {e}")
             messagebox.showerror("错误", f"保存配置失败: {e}")

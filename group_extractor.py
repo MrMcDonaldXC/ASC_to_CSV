@@ -24,6 +24,16 @@
 
 import re
 from typing import List, Set, Dict, Optional, Tuple
+from enum import Enum
+
+
+class ExtractionStrategy(Enum):
+    """分组提取策略枚举"""
+    AUTO_DISCOVER = "auto_discover"
+    MESSAGE_PREFIX = "message_prefix"
+    SIGNAL_PREFIX = "signal_prefix"
+    BATP_PATTERN = "batp_pattern"
+    CUSTOM_PATTERN = "custom_pattern"
 
 
 class GroupExtractor:
@@ -64,15 +74,18 @@ class GroupExtractor:
     
     # 文件名中的无效字符（Windows文件系统限制）
     INVALID_CHARS = r'[<>:"/\\|?*\x00-\x1f]'
-    
-    def __init__(self):
+
+    def __init__(self, strategy: ExtractionStrategy = ExtractionStrategy.AUTO_DISCOVER):
         """
         初始化分组提取器
-        
-        创建空的组集合和映射缓存，用于存储提取过程中的状态。
+
+        Args:
+            strategy: 分组提取策略，默认使用AUTO_DISCOVER
         """
+        self.strategy = strategy
         self.discovered_groups: Set[str] = set()
         self.group_mapping: Dict[str, Optional[str]] = {}
+        self._custom_patterns: List[re.Pattern] = []
     
     def extract_from_signal_name(self, signal_name: str) -> Optional[str]:
         """

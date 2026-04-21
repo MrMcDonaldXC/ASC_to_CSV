@@ -111,26 +111,28 @@ class CSVDataLoader:
         Returns:
             bool: 是否成功加载
         """
-        with open(file_path, 'r', newline='', encoding=encoding) as f:
-            reader = csv.reader(f)
-            
-            try:
-                self.columns = next(reader)
-            except StopIteration:
-                return False
-            
-            for col in self.columns:
-                self.data[col] = []
-            
-            for row in reader:
-                if len(row) != len(self.columns):
-                    continue
-                self._parse_row(row)
-                self.row_count += 1
-            
-            self.total_rows = self.row_count
-        
-        return True
+        try:
+            with open(file_path, 'r', newline='', encoding=encoding) as f:
+                reader = csv.reader(f)
+                try:
+                    self.columns = next(reader)
+                except StopIteration:
+                    return False
+                
+                for col in self.columns:
+                    self.data[col] = []
+                
+                for row in reader:
+                    if len(row) != len(self.columns):
+                        continue
+                    self._parse_row(row)
+                    self.row_count += 1
+                
+                self.total_rows = self.row_count
+            return True
+        except IOError as e:
+            print(f"文件读写错误: {e}")
+            return False
     
     def _load_chunk(self, start: int, count: int) -> bool:
         """

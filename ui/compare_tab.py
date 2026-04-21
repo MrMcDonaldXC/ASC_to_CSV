@@ -30,7 +30,7 @@ class CompareTab(BaseTab):
     def __init__(self, parent: tk.Widget, app_context: dict):
         """
         初始化对比标签页
-        
+
         Args:
             parent: 父容器
             app_context: 应用上下文
@@ -38,22 +38,25 @@ class CompareTab(BaseTab):
         self.compare_file_listbox: Optional[tk.Listbox] = None
         self.compare_column_vars: Dict[str, tk.BooleanVar] = {}
         self.chart_manager: Optional[ChartManager] = None
-        
+
         self.compare_zoom_level: float = 1.0
         self.compare_scroll_position: float = 0.0
-        
+
         self._compare_time_data: List = []
-        
+        self._loaded_files: Dict[str, CSVDataLoader] = {}
+
         self._compare_update_pending: bool = False
         self._last_compare_update: float = 0
         self._debounce_delay: int = 50
         self._listbox_hover: bool = False
-        
+
+        self._max_data_points: int = 100000
+
         self.compare_zoom_scale: Optional[ttk.Scale] = None
         self.compare_zoom_label: Optional[ttk.Label] = None
         self.compare_scroll_scale: Optional[ttk.Scale] = None
         self.compare_status_label: Optional[ttk.Label] = None
-        
+
         super().__init__(parent, app_context)
     
     def _create_widgets(self):
@@ -237,74 +240,85 @@ class CompareTab(BaseTab):
         if not selected_files:
             messagebox.showwarning("提示", "请至少选择一个文件")
             return
-        
+
         selected_columns = [col for col, var in self.compare_column_vars.items() if var.get()]
         if not selected_columns:
             messagebox.showwarning("提示", "请至少选择一个数据列")
             return
-        
+
         self.chart_manager.clear()
-        
+
         import matplotlib.pyplot as plt
         colors = plt.cm.tab10.colors
         color_idx = 0
-        
+
         file_names = [self.compare_file_listbox.get(i) for i in selected_files]
-        
+        total_files = len(file_names)
+        max_points_in_any_file = 0
+
         for file_name in file_names:
             output_dir = self.app_context.get('output_dir', '')
             file_path = os.path.join(output_dir, file_name)
-            loader = CSVDataLoader()
-            
-            if not loader.load(file_path):
+            loader = self._get_file_loader(file_path)
+
+            if not loader:
                 continue
-            
+
             time_col = loader.get_time_column()
             if not time_col:
                 continue
-            
+
             time_data = loader.data[time_col]
             self._compare_time_data = time_data
-            
+
             total_points = len(time_data)
+            max_points_in_any_file = max(max_points_in_any_file, total_points)
+
             visible_points = max(1, int(total_points / self.compare_zoom_level))
-            
+            visible_points = min(visible_points, self._max_data_points)
+
             start_idx = int(self.compare_scroll_position * (total_points - visible_points))
             start_idx = max(0, min(start_idx, total_points - visible_points))
             end_idx = min(start_idx + visible_points, total_points)
-            
+
             for target_col in selected_columns:
                 matching_col = None
                 for col in loader.columns:
                     if target_col in col:
                         matching_col = col
                         break
-                
+
                 if not matching_col:
                     continue
-                
+
                 y_data = loader.data[matching_col][start_idx:end_idx]
                 x_data = time_data[start_idx:end_idx]
-                
+
                 valid_indices = [i for i, v in enumerate(y_data) if v is not None]
-                
+
                 if valid_indices:
                     label = f"{file_name.replace('.csv', '')} - {target_col}"
-                    
+
                     self.chart_manager.plot_segments(
                         x_data, y_data, label=label,
                         linewidth=1.5, color=colors[color_idx % len(colors)],
                         antialiased=True
                     )
                     color_idx += 1
-        
+
+        if max_points_in_any_file > self._max_data_points:
+            self.chart_manager.set_max_render_points(self._max_data_points)
+        else:
+            self.chart_manager.set_max_render_points(max_points_in_any_file)
+
         self.chart_manager.set_labels("时间 [s]", "数值", "多文件数据对比")
         self.chart_manager.add_legend()
         self.chart_manager.add_grid()
         self.chart_manager.update()
-        
+
+        perf_info = f" (性能模式)" if max_points_in_any_file > self._max_data_points else ""
         self.compare_status_label.config(
-            text=f"已生成对比图 - 文件: {len(file_names)}, 数据列: {len(selected_columns)}")
+            text=f"已生成对比图 - 文件: {len(file_names)}, 数据列: {len(selected_columns)}{perf_info}")
     
     def _on_zoom_changed(self, value):
         """缩放变化事件处理"""
@@ -380,7 +394,43 @@ class CompareTab(BaseTab):
         self.compare_scroll_position = 0.0
         self.compare_scroll_scale.set(0)
         self._generate_chart()
-    
+
+    def cleanup(self):
+        """清理资源，防止内存泄漏"""
+        if self.chart_manager:
+            self.chart_manager.destroy()
+            self.chart_manager = None
+
+        for loader in self._loaded_files.values():
+            loader.clear()
+        self._loaded_files.clear()
+        self._compare_time_data = []
+
     def refresh_files(self):
         """刷新文件列表（公共接口）"""
         self._refresh_files()
+
+    def _get_file_loader(self, file_path: str) -> Optional[CSVDataLoader]:
+        """
+        获取或创建文件加载器（带缓存）
+
+        Args:
+            file_path: CSV文件路径
+
+        Returns:
+            CSVDataLoader或None
+        """
+        if file_path in self._loaded_files:
+            return self._loaded_files[file_path]
+
+        if len(self._loaded_files) >= 5:
+            oldest_key = next(iter(self._loaded_files))
+            old_loader = self._loaded_files.pop(oldest_key)
+            old_loader.clear()
+
+        loader = CSVDataLoader()
+        if loader.load(file_path):
+            self._loaded_files[file_path] = loader
+            return loader
+
+        return None

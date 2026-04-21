@@ -34,10 +34,10 @@ def sanitize_path(path: str) -> str:
     
     path = os.path.normpath(path)
     
-    dangerous_patterns = ['..', '~']
+    dangerous_patterns = ['..', '~', '$', '`', ';', '&&', '||']
     for pattern in dangerous_patterns:
         if pattern in path:
-            pass
+            raise ValueError(f"路径包含危险模式: {pattern}")
     
     return path
 
