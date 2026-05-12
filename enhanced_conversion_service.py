@@ -5,6 +5,15 @@
 本模块是ASC到CSV转换流程的核心协调层，负责组织和协调各个处理模块，
 完成从ASC文件解析到CSV文件生成的完整转换流程。
 
+.. deprecated::
+    此类已重构为Facade模式，具体实现已移至 core/ 包：
+    - core.conversion_coordinator.ConversionCoordinator: 转换协调器
+    - core.single_file_processor.SingleFileProcessor: 单文件处理器
+    - core.multi_file_processor.MultiFileProcessor: 多文件处理器
+
+    请使用新的模块以获得更好的代码组织和维护性。
+    此类保留用于向后兼容。
+
 主要功能：
     - 协调DBC加载、ASC解析、数据处理、CSV写入各模块
     - 提供转换进度和日志回调接口
@@ -21,16 +30,16 @@
 使用示例：
     >>> from config import Config
     >>> from enhanced_conversion_service import EnhancedConversionService
-    >>> 
+    >>>
     >>> config = Config(
     ...     asc_file='input.asc',
     ...     dbc_files=['data.dbc'],
     ...     output_dir='output'
     ... )
-    >>> 
+    >>>
     >>> service = EnhancedConversionService(config)
     >>> result = service.convert()
-    >>> 
+    >>>
     >>> if result.success:
     ...     print(f"转换成功，创建了 {len(result.created_files)} 个文件")
     ... else:
@@ -38,26 +47,20 @@
 """
 
 import gc
-import os
-from typing import Optional, Callable, Dict, List, Any
+from typing import Optional, Callable, Dict, List
 from dataclasses import dataclass, field
 
 from config import Config
-from dbc_loader import DBCLoader
-from asc_parser import ASCParser
-from asc_file_merger import ASCFileMerger
-from enhanced_data_processor import EnhancedDataProcessor
-from enhanced_csv_writer import EnhancedCSVWriter
-from multi_asc_converter import MultiASCConverter
+from core.conversion_coordinator import ConversionCoordinator, ConversionResult
 
 
 @dataclass
 class EnhancedConversionResult:
     """
     转换结果数据类
-    
+
     封装转换过程的完整结果信息，包括成功状态、统计数据、文件列表和错误信息。
-    
+
     Attributes:
         success (bool): 转换是否成功
         original_count (int): 原始数据点数（解析前的数据点总数）
@@ -69,7 +72,7 @@ class EnhancedConversionResult:
         error_message (str): 错误信息（仅在失败时有值）
         group_statistics (Dict[str, int]): 各分组的信号数量统计
         discovered_groups (List[str]): 发现的所有分组名称（排序后）
-    
+
     Examples:
         >>> result = EnhancedConversionResult()
         >>> result.success = True
@@ -91,30 +94,17 @@ class EnhancedConversionResult:
 class EnhancedConversionService:
     """
     转换服务类
-    
-    作为ASC到CSV转换流程的核心协调器，负责组织和管理各个处理模块的执行顺序，
-    处理错误情况，并提供进度和日志回调接口。
-    
+
+    作为ASC到CSV转换流程的核心协调器，本类现在作为Facade模式，
+    委托给 core.conversion_coordinator.ConversionCoordinator 处理。
+
+    .. deprecated::
+        此类已弃用。请直接使用 core.conversion_coordinator.ConversionCoordinator
+        或保持使用此类（向后兼容）。
+
     Attributes:
         config (Config): 配置对象
-        dbc_loader (Optional[DBCLoader]): DBC文件加载器
-        asc_parser (Optional[ASCParser]): ASC文件解析器
-        data_processor (Optional[EnhancedDataProcessor]): 数据处理器
-        csv_writer (Optional[EnhancedCSVWriter]): CSV写入器
-    
-    分组规则：
-        - BatP + 数字：BATP1, BATP10, BATP28 等
-        - BatP + 1-2个字母：BATPS, BATPQ, BATPL, BATPR 等
-        - 不符合规则的归入 Others
-    
-    转换流程：
-        1. 配置验证 → 确保输入文件存在、输出目录有效
-        2. DBC加载 → 加载DBC文件，建立消息ID到消息对象的映射
-        3. ASC解析 → 解析ASC文件，提取CAN帧并解码信号
-        4. 数据处理 → 聚合采样数据，对信号进行分组分类
-        5. CSV写入 → 为每个分组创建独立的CSV文件
-        6. 资源清理 → 释放内存，确保无内存泄漏
-    
+
     Examples:
         >>> from config import Config
         >>> config = Config(
@@ -123,35 +113,32 @@ class EnhancedConversionService:
         ...     output_dir='output',
         ...     sample_interval=0.1
         ... )
-        >>> 
+        >>>
         >>> service = EnhancedConversionService(config)
-        >>> 
+        >>>
         >>> # 使用回调函数
         >>> def log_handler(message):
         ...     print(message)
-        >>> 
+        >>>
         >>> def progress_handler(progress, line_count):
         ...     print(f"进度: {progress:.1f}%")
-        >>> 
+        >>>
         >>> result = service.convert(
         ...     progress_callback=progress_handler,
         ...     log_callback=log_handler
         ... )
     """
-    
+
     def __init__(self, config: Config):
         """
         初始化转换服务
-        
+
         Args:
             config: 配置对象，包含ASC文件路径、DBC文件列表、输出目录等配置
         """
         self.config = config
-        self.dbc_loader: Optional[DBCLoader] = None
-        self.asc_parser: Optional[ASCParser] = None
-        self.data_processor: Optional[EnhancedDataProcessor] = None
-        self.csv_writer: Optional[EnhancedCSVWriter] = None
-    
+        self._coordinator: Optional[ConversionCoordinator] = None
+
     def convert(
         self,
         progress_callback: Optional[Callable[[float, int], None]] = None,
@@ -160,10 +147,10 @@ class EnhancedConversionService:
     ) -> EnhancedConversionResult:
         """
         执行完整的转换流程
-        
+
         按照预定义的流程执行转换，包括配置验证、DBC加载、ASC解析、
         数据处理和CSV写入。每个阶段都有详细的日志输出。
-        
+
         Args:
             progress_callback: 进度回调函数
                 - 参数1 (float): 进度百分比 (0.0 - 100.0)
@@ -175,7 +162,7 @@ class EnhancedConversionService:
             overwrite: 是否覆盖已存在的文件
                 - False (默认): 跳过已存在的文件
                 - True: 覆盖已存在的文件
-        
+
         Returns:
             EnhancedConversionResult: 转换结果对象
                 - success: 转换是否成功
@@ -183,10 +170,10 @@ class EnhancedConversionService:
                 - discovered_groups: 发现的分组列表
                 - group_statistics: 分组统计信息
                 - error_message: 错误信息（仅在失败时）
-        
+
         Raises:
             不直接抛出异常，所有异常都会被捕获并记录到 error_message
-        
+
         Examples:
             >>> service = EnhancedConversionService(config)
             >>> result = service.convert()
@@ -195,426 +182,50 @@ class EnhancedConversionService:
             ...     for group in result.discovered_groups:
             ...         print(f"  {group}: {result.group_statistics[group]} 个信号")
         """
-        result = EnhancedConversionResult()
-
-        try:
-            self._log(log_callback, "=" * 60)
-            self._log(log_callback, "开始转换...")
-            self._log(log_callback, f"采样间隔: {self.config.sample_interval}秒")
-            self._log(log_callback, f"文件模式: {'多文件拼接' if self.config.multi_file_mode else '单文件'}")
-            self._log(log_callback, "分组规则: BatP+数字 或 BatP+1-2个字母")
-            self._log(log_callback, "")
-
-            if self.config.multi_file_mode:
-                self._log(log_callback, f"ASC文件数量: {len(self.config.asc_files)} 个文件")
-                for f in self.config.asc_files:
-                    self._log(log_callback, f"  - {os.path.basename(f)}")
-                self._log(log_callback, "")
-
-                if not self.config.validate():
-                    result.error_message = "配置验证失败"
-                    return result
-
-                self.config.create_output_dir()
-                result.output_dir = self.config.output_dir
-
-                multi_converter = MultiASCConverter(self.config)
-                multi_result = multi_converter.convert(
-                    progress_callback=progress_callback,
-                    log_callback=self._wrap_log_callback(log_callback)
-                )
-
-                result.success = multi_result.success
-                result.created_files = multi_result.created_files
-                result.discovered_groups = multi_result.discovered_groups
-                result.group_statistics = multi_result.group_statistics
-                result.error_message = multi_result.error_message
-                result.output_dir = multi_result.output_dir
-
-                self._log(log_callback, "")
-                self._log(log_callback, "=" * 60)
-                self._log(log_callback, "转换完成!")
-                self._log(log_callback, f"输出目录: {result.output_dir}")
-                self._log(log_callback, f"发现分组: {len(result.discovered_groups)}个")
-                self._log(log_callback, f"总数据行: {multi_result.total_rows}行")
-                self._log(log_callback, "=" * 60)
-
-                return result
-
-            if not self.config.validate():
-                result.error_message = "配置验证失败"
-                return result
-
-            self.config.create_output_dir()
-            result.output_dir = self.config.output_dir
-
-            if not self._load_dbc(log_callback):
-                result.error_message = "DBC文件加载失败"
-                return result
-
-            if not self._parse_asc(progress_callback, log_callback):
-                result.error_message = "ASC文件解析失败"
-                return result
-
-            self._process_data(log_callback)
-
-            statistics = self._get_statistics()
-            result.original_count = statistics['original_count']
-            result.sampled_count = statistics['sampled_count']
-            result.signal_count = statistics['signal_count']
-            
-            # 阶段5: CSV写入
-            write_result = self._write_csv(log_callback, overwrite)
-            result.created_files = write_result.get('created_files', [])
-            result.skipped_files = write_result.get('skipped_files', [])
-            result.success = True
-            
-            # 获取分组信息
-            result.discovered_groups = self.data_processor.sorted_groups
-            result.group_statistics = self.data_processor.get_group_statistics()
-            
-            # 输出完成信息
-            self._log(log_callback, "")
-            self._log(log_callback, "=" * 60)
-            self._log(log_callback, "转换完成！")
-            self._log(log_callback, f"输出目录: {self.config.output_dir}")
-            self._log(log_callback, f"发现分组: {len(result.discovered_groups)}个")
-            
-            # 显示分组详情
-            for group_name in result.discovered_groups:
-                count = result.group_statistics.get(group_name, 0)
-                self._log(log_callback, f"  {group_name}: {count}个信号")
-            
-            self._log(log_callback, f"创建文件: {len(result.created_files)}个")
-            if result.skipped_files:
-                self._log(log_callback, f"跳过文件: {len(result.skipped_files)}个（已存在）")
-            self._log(log_callback, "=" * 60)
-            
-        except Exception as e:
-            result.error_message = f"{type(e).__name__}: {e}"
-            self._log(log_callback, f"转换失败: {result.error_message}")
-            
-        finally:
-            self._cleanup()
-        
-        return result
-    
-    def _log(self, callback: Optional[Callable[[str], None]], message: str):
-        """
-        输出日志消息
-
-        Args:
-            callback: 日志回调函数，如果为None则输出到控制台
-            message: 日志消息
-        """
-        if callback:
-            callback(message)
-        else:
-            print(message)
-
-    def _wrap_log_callback(self, log_callback: Optional[Callable[[str], None]]):
-        """
-        包装日志回调函数
-
-        用于将字符串类型的日志消息传递给回调函数。
-
-        Args:
-            log_callback: 日志回调函数
-
-        Returns:
-            包装后的回调函数
-        """
-        def wrapper(message: str):
-            if log_callback:
-                log_callback(message)
-            else:
-                print(message)
-        return wrapper
-
-    def _validate_config(self, log_callback: Optional[Callable[[str], None]]) -> bool:
-        """
-        验证配置
-        
-        检查配置的有效性，包括：
-        - ASC文件是否存在
-        - DBC文件是否存在
-        - 输出目录是否有效
-        
-        Args:
-            log_callback: 日志回调函数
-        
-        Returns:
-            bool: 配置是否有效
-        """
-        if not self.config.validate():
-            self._log(log_callback, "配置验证失败")
-            return False
-        return True
-    
-    def _load_dbc(self, log_callback: Optional[Callable[[str], None]]) -> bool:
-        """
-        加载DBC文件
-        
-        加载所有配置的DBC文件，建立消息和信号的映射关系。
-        
-        Args:
-            log_callback: 日志回调函数
-        
-        Returns:
-            bool: 加载是否成功
-        
-        Side Effects:
-            创建 self.dbc_loader 实例
-        """
-        self._log(log_callback, "正在加载DBC文件...")
-        
-        self.dbc_loader = DBCLoader()
-        if not self.dbc_loader.load(self.config.dbc_files):
-            return False
-        
-        self._log(log_callback, f"总消息定义数: {self.dbc_loader.get_message_count()}")
-        self._log(log_callback, f"总信号定义数: {self.dbc_loader.get_signal_count()}")
-        self._log(log_callback, "")
-        
-        return True
-    
-    def _parse_asc(
-        self,
-        progress_callback: Optional[Callable[[float, int], None]],
-        log_callback: Optional[Callable[[str], None]]
-    ) -> bool:
-        """
-        解析ASC文件
-
-        支持单文件和多文件两种模式：
-        - 单文件模式：直接解析单个ASC文件
-        - 多文件模式：先排序再依次解析多个ASC文件
-
-        Args:
-            progress_callback: 进度回调函数
-            log_callback: 日志回调函数
-
-        Returns:
-            bool: 解析是否成功
-
-        Side Effects:
-            创建 self.asc_parser 实例
-        """
-        self.asc_parser = ASCParser(
-            sample_interval=self.config.sample_interval,
-            debug=self.config.debug
-        )
-
-        if self.config.multi_file_mode:
-            return self._parse_multiple_asc(progress_callback, log_callback)
-        else:
-            return self._parse_single_asc(progress_callback, log_callback)
-
-    def _parse_single_asc(
-        self,
-        progress_callback: Optional[Callable[[float, int], None]],
-        log_callback: Optional[Callable[[str], None]]
-    ) -> bool:
-        """
-        解析单个ASC文件（单文件模式）
-
-        Args:
-            progress_callback: 进度回调函数
-            log_callback: 日志回调函数
-
-        Returns:
-            bool: 解析是否成功
-        """
-        self._log(log_callback, "正在解析ASC文件...")
-        self._log(log_callback, "进度: 0%")
-
-        def internal_progress_callback(progress: float, line_count: int):
-            if progress_callback:
-                progress_callback(progress, line_count)
-            if log_callback and progress % 10 < 1:
-                self._log(log_callback, f"进度: {progress:.1f}% (已处理 {line_count:,} 行)")
-
-        if not self.asc_parser.parse(
-            self.config.single_asc_file,
-            self.dbc_loader.message_map,
-            internal_progress_callback
-        ):
-            return False
-
-        original_count, sampled_count, signal_count = self.asc_parser.get_statistics()
-        self._log(log_callback, f"解析完成：原始数据点数: {original_count}, 采样后时间点数: {sampled_count}, 实际信号数: {signal_count}")
-        self._log(log_callback, "")
-
-        return True
-
-    def _parse_multiple_asc(
-        self,
-        progress_callback: Optional[Callable[[float, int], None]],
-        log_callback: Optional[Callable[[str], None]]
-    ) -> bool:
-        """
-        解析多个ASC文件（多文件拼接模式）
-
-        Args:
-            progress_callback: 进度回调函数
-            log_callback: 日志回调函数
-
-        Returns:
-            bool: 解析是否成功
-        """
-        self._log(log_callback, "正在处理多ASC文件...")
-
-        merger = ASCFileMerger()
-
-        def sort_progress_callback(message: str):
-            self._log(log_callback, message)
-
-        sorted_files = merger.sort_files_by_time(self.config.asc_files, sort_progress_callback)
-
-        self._log(log_callback, f"文件排序完成，共 {len(sorted_files)} 个文件")
-        self._log(log_callback, "")
-
-        self._log(log_callback, "正在解析ASC文件...")
-        self._log(log_callback, "进度: 0%")
-
-        def internal_progress_callback(progress: float, line_count: int, current_file: str = ""):
-            if progress_callback:
-                progress_callback(progress, line_count)
-            if log_callback:
-                msg = f"进度: {progress:.1f}% (已处理 {line_count:,} 行)"
-                if current_file:
-                    msg += f" - {current_file}"
-                self._log(log_callback, msg)
-
-        if not self.asc_parser.parse_multiple(
-            sorted_files,
-            self.dbc_loader.message_map,
-            internal_progress_callback
-        ):
-            return False
-
-        original_count, sampled_count, signal_count = self.asc_parser.get_statistics()
-        self._log(log_callback, f"解析完成：原始数据点数: {original_count}, 采样后时间点数: {sampled_count}, 实际信号数: {signal_count}")
-        self._log(log_callback, "")
-
-        return True
-    
-    def _process_data(self, log_callback: Optional[Callable[[str], None]]):
-        """
-        处理数据
-        
-        聚合采样数据并对信号进行分组分类。
-        
-        Args:
-            log_callback: 日志回调函数
-        
-        Side Effects:
-            创建 self.data_processor 实例
-        """
-        self._log(log_callback, "正在处理数据...")
-        
-        self.data_processor = EnhancedDataProcessor()
-        self.data_processor.aggregate(self.asc_parser.sampled_data)
-        self.data_processor.classify_signals(self.asc_parser.found_signals)
-        
-        self._log(log_callback, "分组结果：")
-        for group_name, count in self.data_processor.get_group_statistics().items():
-            self._log(log_callback, f"  {group_name}: {count}个信号")
-        self._log(log_callback, "")
-    
-    def _get_statistics(self) -> Dict[str, int]:
-        """
-        获取统计信息
-        
-        Returns:
-            Dict[str, int]: 统计信息字典
-                - original_count: 原始数据点数
-                - sampled_count: 采样后时间点数
-                - signal_count: 实际信号数
-        """
-        original_count, sampled_count, signal_count = self.asc_parser.get_statistics()
-        return {
-            'original_count': original_count,
-            'sampled_count': sampled_count,
-            'signal_count': signal_count
-        }
-    
-    def _write_csv(self, log_callback: Optional[Callable[[str], None]], 
-                   overwrite: bool) -> Dict[str, Any]:
-        """
-        写入CSV文件
-        
-        为每个分组创建独立的CSV文件，并生成汇总文件。
-        
-        Args:
-            log_callback: 日志回调函数
-            overwrite: 是否覆盖已存在的文件
-        
-        Returns:
-            Dict[str, Any]: 写入结果
-                - created_files: 创建的文件列表
-                - skipped_files: 跳过的文件列表
-                - total_groups: 总分组数
-                - created_count: 创建文件数
-                - skipped_count: 跳过文件数
-        
-        Side Effects:
-            创建 self.csv_writer 实例
-        """
-        self._log(log_callback, "正在创建CSV文件...")
-        
-        self.csv_writer = EnhancedCSVWriter(
-            output_dir=self.config.output_dir,
-            encoding=self.config.csv_encoding,
+        self._coordinator = ConversionCoordinator(self.config)
+        core_result = self._coordinator.execute(
+            progress_callback=progress_callback,
+            log_callback=log_callback,
             overwrite=overwrite
         )
-        
-        write_result = self.csv_writer.write_all_groups(
-            classified_signals=self.data_processor.classified_signals,
-            sorted_timestamps=self.data_processor.get_sorted_timestamps(),
-            aggregated_data=self.data_processor.aggregated_data,
-            signal_info=self.dbc_loader.signal_info
+
+        result = EnhancedConversionResult(
+            success=core_result.success,
+            original_count=core_result.original_count,
+            sampled_count=core_result.sampled_count,
+            signal_count=core_result.signal_count,
+            created_files=core_result.created_files,
+            skipped_files=core_result.skipped_files,
+            output_dir=core_result.output_dir,
+            error_message=core_result.error_message,
+            group_statistics=core_result.group_statistics,
+            discovered_groups=core_result.discovered_groups
         )
-        
-        self.csv_writer.write_summary_file(
-            classified_signals=self.data_processor.classified_signals,
-            sorted_timestamps=self.data_processor.get_sorted_timestamps(),
-            result_stats=write_result
-        )
-        
-        return write_result
-    
-    def _cleanup(self):
-        """
-        清理资源
-        
-        释放所有模块占用的内存，确保无内存泄漏。
-        通常在转换完成后调用。
-        """
-        if self.asc_parser:
-            self.asc_parser.clear()
-        if self.data_processor:
-            self.data_processor.clear()
-        gc.collect()
-    
+
+        return result
+
     def get_group_statistics(self) -> Dict[str, int]:
         """
         获取分组统计信息
-        
+
         Returns:
             Dict[str, int]: 分组名称到信号数量的映射
         """
-        if self.data_processor:
-            return self.data_processor.get_group_statistics()
+        if self._coordinator and self._coordinator.single_processor:
+            processor = self._coordinator.single_processor
+            if processor.data_processor:
+                return processor.data_processor.get_group_statistics()
         return {}
-    
+
     def get_sorted_groups(self) -> List[str]:
         """
         获取排序后的分组列表
-        
+
         Returns:
             List[str]: 排序后的组名称列表
         """
-        if self.data_processor:
-            return self.data_processor.sorted_groups
+        if self._coordinator and self._coordinator.single_processor:
+            processor = self._coordinator.single_processor
+            if processor.data_processor:
+                return processor.data_processor.sorted_groups
         return []
