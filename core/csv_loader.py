@@ -49,6 +49,7 @@ class CSVDataLoader:
         self._chunk_size: Optional[int] = None
         self._loaded_chunks: int = 0
         self._has_more_data: bool = False
+        self._skipped_rows: int = 0
     
     def load(self, file_path: str, encoding: str = None, 
              chunk_size: int = None) -> bool:
@@ -103,14 +104,15 @@ class CSVDataLoader:
     def _load_with_encoding(self, file_path: str, encoding: str) -> bool:
         """
         使用指定编码加载文件
-        
+
         Args:
             file_path: 文件路径
             encoding: 文件编码
-            
+
         Returns:
             bool: 是否成功加载
         """
+        self._skipped_rows = 0
         try:
             with open(file_path, 'r', newline='', encoding=encoding) as f:
                 reader = csv.reader(f)
@@ -118,16 +120,17 @@ class CSVDataLoader:
                     self.columns = next(reader)
                 except StopIteration:
                     return False
-                
+
                 for col in self.columns:
                     self.data[col] = []
-                
+
                 for row in reader:
                     if len(row) != len(self.columns):
+                        self._skipped_rows += 1
                         continue
                     self._parse_row(row)
                     self.row_count += 1
-                
+
                 self.total_rows = self.row_count
             return True
         except IOError as e:
@@ -398,7 +401,17 @@ class CSVDataLoader:
         self.total_rows = 0
         self._loaded_chunks = 0
         self._has_more_data = False
-    
+        self._skipped_rows = 0
+
+    def get_skipped_rows(self) -> int:
+        """
+        获取加载时跳过的行数
+
+        Returns:
+            int: 跳过的行数
+        """
+        return self._skipped_rows
+
     def get_encoding(self) -> str:
         """
         获取当前使用的编码

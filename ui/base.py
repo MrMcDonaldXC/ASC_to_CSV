@@ -12,33 +12,42 @@ from typing import Optional
 class BaseTab(ttk.Frame):
     """
     标签页基类
-    
+
     所有功能标签页的父类，提供公共方法和接口
     """
-    
+
     def __init__(self, parent: tk.Widget, app_context: dict):
         """
         初始化标签页
-        
+
         Args:
             parent: 父容器
             app_context: 应用上下文（包含共享资源）
         """
         super().__init__(parent)
         self.app_context = app_context
+        self._is_active = False
         self._create_widgets()
-    
+
     def _create_widgets(self):
         """创建界面组件（子类实现）"""
         pass
-    
+
     def on_activate(self):
         """标签页激活时调用（子类实现）"""
-        pass
-    
+        self._is_active = True
+
     def on_deactivate(self):
         """标签页停用时调用（子类实现）"""
+        self._is_active = False
+
+    def cleanup(self):
+        """清理标签页占用的资源（子类实现）"""
         pass
+
+    def is_active(self) -> bool:
+        """检查标签页是否处于激活状态"""
+        return self._is_active
 
 
 class LogMixin:

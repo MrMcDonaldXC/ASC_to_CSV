@@ -111,6 +111,11 @@ class MainApplication:
 
         self.export_tab = ExportTab(self.notebook, self.app_context)
         self.notebook.add(self.export_tab, text="数据导出")
+
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+
+        self._tabs = [self.convert_tab, self.visualize_tab, self.compare_tab, self.export_tab]
+        self._current_tab_index = 0
     
     def _create_app_context(self) -> dict:
         """
@@ -149,13 +154,38 @@ class MainApplication:
             self.compare_tab.refresh_files()
             self.export_tab.refresh_files()
     
+    def _on_tab_changed(self, event):
+        """Tab切换时触发的事件"""
+        new_index = self.notebook.index(self.notebook.select())
+
+        if 0 <= self._current_tab_index < len(self._tabs):
+            old_tab = self._tabs[self._current_tab_index]
+            old_tab.on_deactivate()
+            old_tab.cleanup()
+
+        self._current_tab_index = new_index
+
+        if 0 <= new_index < len(self._tabs):
+            new_tab = self._tabs[new_index]
+            new_tab.on_activate()
+
     def _on_closing(self):
         """窗口关闭事件处理"""
         if self.app_context.get('is_converting', False):
             if messagebox.askyesno("确认", "转换正在进行中，确定要退出吗？"):
+                self._cleanup_all_tabs()
                 self.root.quit()
         else:
+            self._cleanup_all_tabs()
             self.root.quit()
+
+    def _cleanup_all_tabs(self):
+        """清理所有Tab的资源"""
+        for tab in self._tabs:
+            try:
+                tab.cleanup()
+            except Exception as e:
+                print(f"清理Tab资源时出错: {e}")
 
 
 def main():

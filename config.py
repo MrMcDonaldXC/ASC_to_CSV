@@ -19,26 +19,31 @@ MAX_PATH_LENGTH = 4096
 def sanitize_path(path: str) -> str:
     """
     清理和验证路径
-    
+
     Args:
         path: 原始路径
-        
+
     Returns:
         str: 清理后的路径
+
+    Raises:
+        ValueError: 路径包含危险模式或超过长度限制
     """
     if not path:
         return ""
-    
+
     if len(path) > MAX_PATH_LENGTH:
         raise ValueError(f"路径长度超过限制: {len(path)} > {MAX_PATH_LENGTH}")
-    
-    path = os.path.normpath(path)
-    
-    dangerous_patterns = ['..', '~', '$', '`', ';', '&&', '||']
+
+    path = os.path.expanduser(path)
+
+    path = os.path.normpath(os.path.abspath(path))
+
+    dangerous_patterns = ['..', '~', '$', '`', ';', '&&', '||', '\r', '\n']
     for pattern in dangerous_patterns:
         if pattern in path:
             raise ValueError(f"路径包含危险模式: {pattern}")
-    
+
     return path
 
 

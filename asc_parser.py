@@ -70,20 +70,25 @@ class ASCParser:
             
             encodings = ['utf-8', 'gbk', 'gb2312', 'latin-1']
             file_handle = None
-            
+            encoding_errors = []
+
             for encoding in encodings:
                 try:
                     file_handle = open(asc_file, 'r', encoding=encoding, buffering=8192*4)
                     file_handle.read(1024)
                     file_handle.seek(0)
                     break
-                except (UnicodeDecodeError, UnicodeError):
+                except (UnicodeDecodeError, UnicodeError) as e:
                     if file_handle:
                         file_handle.close()
+                    encoding_errors.append(f"{encoding}: {str(e)}")
                     continue
-            
+
             if file_handle is None:
+                error_detail = "; ".join(encoding_errors)
                 print(f"错误：无法识别文件编码 - {asc_file}")
+                print(f"尝试的编码: {encodings}")
+                print(f"编码错误详情: {error_detail}")
                 return False
             
             with file_handle as f:

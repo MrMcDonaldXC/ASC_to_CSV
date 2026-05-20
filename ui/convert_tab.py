@@ -109,6 +109,8 @@ class ConvertTab(BaseTab, LogMixin):
         self.encoding_var: Optional[tk.StringVar] = None
         self.debug_var: Optional[tk.BooleanVar] = None
         self.convert_btn: Optional[ttk.Button] = None
+        self._save_config_btn: Optional[ttk.Button] = None
+        self._save_in_progress: bool = False
 
         super().__init__(parent, app_context)
     
@@ -300,12 +302,13 @@ class ConvertTab(BaseTab, LogMixin):
         """
         action_frame = ttk.Frame(parent)
         action_frame.pack(fill=tk.X, pady=10)
-        
-        ttk.Button(action_frame, text="保存配置", 
-                   command=self._save_config, width=12).pack(side=tk.LEFT, padx=5)
-        
-        self.convert_btn = ttk.Button(action_frame, text="开始转换", 
-                                       command=self._start_convert, width=15)
+
+        self._save_config_btn = ttk.Button(action_frame, text="保存配置",
+                                          command=self._save_config, width=12)
+        self._save_config_btn.pack(side=tk.LEFT, padx=5)
+
+        self.convert_btn = ttk.Button(action_frame, text="开始转换",
+                                      command=self._start_convert, width=15)
         self.convert_btn.pack(side=tk.LEFT, padx=5)
     
     def _create_log_section(self, parent: ttk.Frame):
@@ -389,36 +392,42 @@ class ConvertTab(BaseTab, LogMixin):
 
         成功时显示提示对话框，失败时显示错误对话框。
         """
-        multi_file_mode = self.asc_mode_var.get()
+        if self._save_in_progress:
+            return
 
-        if multi_file_mode:
-            asc_list_for_save = list(self.asc_listbox.get(0, tk.END))
-            asc_file_for_save = ""
-        else:
-            asc_list_for_save = []
-            asc_file_for_save = self.asc_entry.get().strip()
-
-        sample_interval_str = self.sample_interval_var.get().strip()
-        try:
-            sample_interval = float(sample_interval_str) if sample_interval_str else 0.1
-        except ValueError:
-            sample_interval = 0.1
-
-        config_data = {
-            "asc_file": asc_file_for_save,
-            "asc_files": asc_list_for_save,
-            "multi_file_mode": multi_file_mode,
-            "dbc_files": list(self.dbc_listbox.get(0, tk.END)),
-            "output_dir": self.output_entry.get().strip(),
-            "sample_interval": sample_interval,
-            "csv_encoding": self.encoding_var.get(),
-            "debug": self.debug_var.get()
-        }
-
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        config_path = os.path.join(project_root, "config.json")
+        self._save_in_progress = True
+        self._save_config_btn.config(state=tk.DISABLED)
 
         try:
+            multi_file_mode = self.asc_mode_var.get()
+
+            if multi_file_mode:
+                asc_list_for_save = list(self.asc_listbox.get(0, tk.END))
+                asc_file_for_save = ""
+            else:
+                asc_list_for_save = []
+                asc_file_for_save = self.asc_entry.get().strip()
+
+            sample_interval_str = self.sample_interval_var.get().strip()
+            try:
+                sample_interval = float(sample_interval_str) if sample_interval_str else 0.1
+            except ValueError:
+                sample_interval = 0.1
+
+            config_data = {
+                "asc_file": asc_file_for_save,
+                "asc_files": asc_list_for_save,
+                "multi_file_mode": multi_file_mode,
+                "dbc_files": list(self.dbc_listbox.get(0, tk.END)),
+                "output_dir": self.output_entry.get().strip(),
+                "sample_interval": sample_interval,
+                "csv_encoding": self.encoding_var.get(),
+                "debug": self.debug_var.get()
+            }
+
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            config_path = os.path.join(project_root, "config.json")
+
             with open(config_path, 'w', encoding='utf-8') as f:
                 json.dump(config_data, f, indent=4, ensure_ascii=False)
                 f.flush()
@@ -435,6 +444,9 @@ class ConvertTab(BaseTab, LogMixin):
         except Exception as e:
             self._log(f"保存配置失败: {e}")
             messagebox.showerror("错误", f"保存配置失败: {e}")
+        finally:
+            self._save_in_progress = False
+            self._save_config_btn.config(state=tk.NORMAL)
     
     def _validate_inputs(self) -> bool:
         """
